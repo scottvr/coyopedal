@@ -2,8 +2,12 @@
 
 Running notes from the board investigation started on 2026-10-08. Nothing here is
 upstream-ready; it is what we learned, where it came from, and what we decided, so it is not
-lost. Photos of the actual board revision are beside this file (`IMG_4706.jpeg` is the carrier
-pinout table, `IMG_4707.jpeg` the board layout).
+lost. Photos of the actual board revision live outside the repo in `~/Downloads/lavfin/`
+(`IMG_4706.jpeg` is the carrier pinout table, `IMG_4707.jpeg` the board layout). They were in
+this folder for one day, and the Gea asset packer swept them into the firmware image: it
+embeds every image file it finds under the project, not only the ones the UI references, so the
+app image grew by 5.4 MB and overflowed its 8 MB OTA slot. Never keep images in the tree that
+are not meant for the device.
 
 ## Status
 
@@ -11,11 +15,13 @@ pinout table, `IMG_4707.jpeg` the board layout).
   the carrier board uses the ESP32-S3's native USB pins for the display and a battery divider.
 - First firmware milestone is a headless composed target. The screen, touch and speaker need
   upstream Geastack work before they can be used.
-- The audio interface will be a JOYO MOMIX CAB running Rob Murru's custom firmware. It is a
-  UAC1 device. Generic UAC1 discovery now exists in the pedal (`src/native/drivers/uac1.hpp`,
-  wired into `usb_audio.cpp` as the fallback when UAC2 discovery declines a device), with a
-  host test against the MOMIX fixture in `tests/usb/`. Streaming on hardware is still to be
-  done.
+- The audio interface will be a JOYO MOMIX CAB running Rob Murru's custom firmware. It is a UAC1
+  device. Generic UAC1 discovery now exists in the pedal (`src/native/drivers/uac1.hpp`, wired into
+  `usb_audio.cpp` as the fallback when UAC2 discovery declines a device), with a host test against
+  the MOMIX fixture in `tests/usb/`. Streaming on hardware is still to be done. Measured cost: the
+  driver object grows by 12.7 KB of code (46.5 KB to 59.3 KB of `.text`), no change to data, and
+  discovery allocates only on the setup task. The firmware builds and links against ESP-IDF 6.0.2:
+  3,068,336 bytes, 63% of the 8 MB OTA slot free, no warnings in the pedal's sources.
 
 ## The kit
 
@@ -352,7 +358,12 @@ docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
   symlinks a toolchain and a venv need), installed by `npx gea setup --esp-idf --idf-version
 v6.0.2` with `IDF_PATH` and `IDF_TOOLS_PATH` pointing into that volume. Remove `.gea/build`
   before the first build; its CMake cache still points at the old toolchain. The boot volume
-  ran out of space during this; keep the IDF tree and build outputs off it.
+  ran out of space during this; keep the IDF tree and build outputs off it. The RISC-V gdb
+  gap applies to this install too: `install.sh esp32s3` leaves out `riscv32-esp-elf-gdb`
+  while `idf_tools.py export` demands it (the S3's ULP coprocessor is RISC-V), so
+  `idf_tools.py install riscv32-esp-elf-gdb` with `IDF_TOOLS_PATH` set is part of setup. The
+  harness shell does not see your exports; builds from here set `IDF_TOOLS_PATH`
+  explicitly, and the CLI finds `~/esp/esp-idf` on its own.
 - Devkit build risk: the base target's CMake compiles the ES8311 binding whenever the app has
   the audio capability (the pedal does, for the internal speaker), with no check that the
   board declares a codec. A composed headless board emits no `board::audio`, so the first
