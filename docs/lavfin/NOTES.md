@@ -344,7 +344,21 @@ docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
   driver, compile warning-free, but the link never happens: Geastack 0.1.87's ES8311 binding
   sets the I2S port to -1 expecting ESP-IDF 6's `I2S_NUM_AUTO`, which 5.5 defines as a
   positive enumerator, so its static assertion fails. A full firmware build needs ESP-IDF
-  6.0.2, installed with `npx gea setup --esp-idf`. `.gea/boards.json` (gitignored) holds a build-only `amoled` alias with no USB serial.
+  6.0.2, installed with `npx gea setup --esp-idf --idf-version v6.0.2`. Once that exists, drop
+  the four exports above: they pin the CLI to 5.5.4.
+
+- Devkit build risk: the base target's CMake compiles the ES8311 binding whenever the app has
+  the audio capability (the pedal does, for the internal speaker), with no check that the
+  board declares a codec. A composed headless board emits no `board::audio`, so the first
+  `s3-devkit` build may fail inside Geastack's binding. If it does, that is an upstream Geastack
+  fix (gate the binding on `GEA_BOARD_HAS_AUDIO`), not something to patch here.
+- iRig HD 2 profile retirement: no public descriptor dump of the HD 2 (1963:0033) exists, and
+  we have no unit. The plan is a quirk table keyed by VID:PID whose HD 2 entry reproduces the
+  profile's choices exactly (capture interface 2 alt 2, playback interface 1 alt 1, rate
+  request sent unconditionally and allowed to fail, playback trimmed to the startup fill),
+  then delete the fixed-profile code. Descriptor-level equivalence needs a dump from an HD 2
+  owner as a fixture; streaming equivalence needs the device, which upstream has. Present
+  that as a PR to be verified by them rather than claiming it works. `.gea/boards.json` (gitignored) holds a build-only `amoled` alias with no USB serial.
   `npm run format:setup` has not been run and clang-format 22.1.8 is not on the PATH; the
   ESP toolchain's clang-format 19 at `~/.espressif/tools/esp-clang/.../bin/clang-format`
   produces the same layout for the files touched so far.
