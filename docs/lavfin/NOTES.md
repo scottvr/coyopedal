@@ -347,6 +347,12 @@ docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
   6.0.2, installed with `npx gea setup --esp-idf --idf-version v6.0.2`. Once that exists, drop
   the four exports above: they pin the CLI to 5.5.4.
 
+- Superseding the above (2026-10-09): the 5.5.4 tree and its tools are being deleted. ESP-IDF
+  6.0.2 goes onto an APFS sparse bundle on the large exFAT drive (exFAT itself cannot hold the
+  symlinks a toolchain and a venv need), installed by `npx gea setup --esp-idf --idf-version
+v6.0.2` with `IDF_PATH` and `IDF_TOOLS_PATH` pointing into that volume. Remove `.gea/build`
+  before the first build; its CMake cache still points at the old toolchain. The boot volume
+  ran out of space during this; keep the IDF tree and build outputs off it.
 - Devkit build risk: the base target's CMake compiles the ES8311 binding whenever the app has
   the audio capability (the pedal does, for the internal speaker), with no check that the
   board declares a codec. A composed headless board emits no `board::audio`, so the first
