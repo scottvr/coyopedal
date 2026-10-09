@@ -1,0 +1,57 @@
+{
+  "id": "esp32-s3-lafvin-multimedia-2.8",
+  "extends": "esp32-s3",
+  "adapter": "esp32-idf",
+  "mcu": "esp32s3",
+  "_comment": "LAFVIN ESP32-S3 Multimedia Kit: an ESP32-S3-WROOM-1 N16R8 dev board (16 MB flash, 8 MB octal PSRAM, CH343 UART port, native USB-OTG port) on a carrier with a 2.8-inch 240x320 SPI LCD, FT6336U touch, microSD on SDMMC 1-bit, a PCM5100 I2S DAC with a PAM8403 amplifier, WS2812 and buzzer. Headless for now: the composable base has no SPI panel driver and the chips catalog no FT6336 adapter. The carrier uses GPIO 19 and 20 (the native USB pair) for a battery divider and the display's MOSI; those two pins are lifted out of the socket so the OTG port can host the audio interface. See docs/lavfin/NOTES.md.",
+  "flashSize": "16MB",
+  "_console": "The CH343 UART bridge is the console and the flashing port; the native USB port is the pedal's host port.",
+  "console": {
+    "transport": "uart",
+    "uart": 0,
+    "baud": 115200
+  },
+  "psram": {
+    "mode": "octal",
+    "speed": 80
+  },
+  "_buses": "SDA 2, SCL 1: the touch controller and the heart-rate sensor. Nothing on it is driven yet.",
+  "buses": {
+    "i2c": {
+      "sda": 2,
+      "scl": 1
+    }
+  },
+  "_audio": "Stopgap. The module is a PCM5100 DAC with no registers, but Geastack's base target compiles its ES8311 binding for every audio-capable app, and a composed board without an audio chip has nothing for it to compile against. Declaring the DAC as an ES8311 on its real I2S pins lets the firmware build; the codec initialisation then fails over I2C at run time, which the binding reports instead of aborting, and the pedal hides its speaker control. MCLK and DIN are required fields; they go to the two free strapping pins, which nothing on the carrier uses. Replace with a codec-less I2S DAC driver once Geastack has one. The CLI also insists on an amplifier-enable pin, which the PAM8403 does not have; GPIO 15 is the camera's XCLK line, an output the pedal never uses, so the binding can drive it freely.",
+  "chips": {
+    "audio": {
+      "driver": "es8311",
+      "interface": "i2s",
+      "pins": {
+        "mclk": 3,
+        "bclk": 42,
+        "ws": 14,
+        "dout": 41,
+        "din": 46,
+        "powerAmplifier": 15
+      }
+    }
+  },
+  "storage": {
+    "microSD": {
+      "interface": "sdmmc-1bit",
+      "pins": {
+        "clk": 39,
+        "cmd": 38,
+        "data0": 40
+      }
+    }
+  },
+  "_controls": "BOOT on GPIO 0 is the pedal's footswitch; the carrier also wires it to the display's D/C line, so the pin is lifted out of the socket with 19 and 20.",
+  "controls": {
+    "launcherButton": {
+      "pin": 0,
+      "activeLevel": 0
+    }
+  }
+}

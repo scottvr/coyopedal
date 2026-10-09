@@ -16,9 +16,10 @@
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
-#if defined(GEA_BOARD_HAS_SDMMC) || defined(GEA_EMBEDDED_RM690B0_PANEL)
+// Every board layer declares its card slot here, as GPIO_NUM_NC pins when the
+// board has none: the AMOLED 2.06's own header, the 2.41's, the LCD 3.5B's and
+// the header the gea CLI generates for a composed target.
 #include "board.h"
-#endif
 
 extern coyopedal::pedal::Processor g_engine;
 namespace {
@@ -35,19 +36,24 @@ bool mount() {
     if (attempted)
         return card != nullptr;
     attempted = true;
+    // A bare module, or a composed target that lists no microSD, declares no
+    // pins. There is nothing to mount, and the SDMMC driver must not be handed
+    // GPIO_NUM_NC.
+    if (gea::platform::board::storage.clk == GPIO_NUM_NC) {
+        static bool reported{};
+        if (!reported) {
+            reported = true;
+            ESP_LOGI("sd_models", "no SD slot on this board");
+        }
+        return false;
+    }
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.max_freq_khz = SDMMC_FREQ_DEFAULT;
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
     slot.width = 1;
-#if defined(GEA_BOARD_HAS_SDMMC) || defined(GEA_EMBEDDED_RM690B0_PANEL)
     slot.clk = gea::platform::board::storage.clk;
     slot.cmd = gea::platform::board::storage.cmd;
     slot.d0 = gea::platform::board::storage.data0;
-#else
-    slot.clk = GPIO_NUM_2;
-    slot.cmd = GPIO_NUM_1;
-    slot.d0 = GPIO_NUM_3;
-#endif
     slot.d1 = slot.d2 = slot.d3 = slot.d4 = slot.d5 = slot.d6 = slot.d7 = GPIO_NUM_NC;
     slot.cd = slot.wp = GPIO_NUM_NC;
     slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;

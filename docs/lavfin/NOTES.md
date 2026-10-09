@@ -323,6 +323,41 @@ docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
    and the ADC shares its clock, which would make the pedal's fixed cadence lock the device.
 5. After generic UAC1 lands: `AUDIO TRY` with the MOMIX, then the loopback test.
 
+## Milestone 1 status (2026-10-09, late)
+
+- `boards/esp32-s3-lafvin-multimedia-2.8.json` is the composed definition: headless, 16 MB,
+  octal PSRAM, console on UART 0, I2C on 2/1, SDMMC on 39/38/40, BOOT as the launcher button,
+  and the PCM5100 declared as an ES8311 on its real I2S pins as a stopgap so Geastack's audio
+  binding compiles (its codec init fails over I2C at run time and the speaker stays hidden;
+  MCLK, DIN and the amplifier-enable pin the CLI insists on go to GPIO 3, 46 and 15, which
+  nothing uses). `package.json` carries its 16 MB partition table and
+  `GEA_BOARD_HAS_POWER: 0`, as it now does for the devkit.
+- It builds against ESP-IDF 6.0.2: 1,949,024 bytes, 54% of the 4 MB OTA slot free. The alias is
+  machine-local in `.gea/boards.json`:
+
+  ```json
+  "lafvin": {
+    "target": "esp32-s3-lafvin-multimedia-2.8",
+    "targetDefinition": "../boards/esp32-s3-lafvin-multimedia-2.8.json",
+    "adapter": "esp32-idf",
+    "appPlatform": "esp32",
+    "flashSize": "16MB"
+  }
+  ```
+
+  Add `transports.usbSerial.serial` (from `npx gea boards discover`) before flashing, and
+  `IDF_TOOLS_PATH=/Volumes/idf6/.espressif-idf6` in the shell. `npx gea build --board lafvin`
+  writes `build/pedalboard.bin`; `npx gea flash --board lafvin --monitor` provisions over the
+  CH343 port.
+
+- `src/native/storage/sd_models.cpp` now reads the slot pins from every board's `board.h` and
+  declines to mount when a board declares none, instead of special-casing two targets and
+  hard-coding the AMOLED's pins. Verified by building the AMOLED target (same 3,068,336-byte
+  image) and the LAFVIN target.
+- Not yet verified on hardware: boot, the stopgap audio failing gracefully, SD, USB host with
+  the MOMIX. The dev board must be out of the carrier, or pins 19, 20 and 0 lifted, before any
+  USB test.
+
 ## Before the next session
 
 - Pick up the MOMIX. Dump the stock descriptors on the Mac with the script (needs libusb
