@@ -358,6 +358,38 @@ docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
   the MOMIX. The dev board must be out of the carrier, or pins 19, 20 and 0 lifted, before any
   USB test.
 
+## Planned: flashing the MOMIX from the pedal (decided 2026-10-09)
+
+The pedal should be able to put Rob Murru's firmware onto a stock MOMIX CAB by itself, from
+maintenance mode, with the interface plugged into the pedal's own host port. Design sketch:
+
+1. **Prerequisite:** the manual route must have worked first on at least one unit: a USB-C
+   breakout, the MOMIX's D+ and D- on two GPIOs of any spare dev board for the key wiggle, VBUS
+   and ground from the Mac so the chip never loses power, then `jl-uboot-tool` on the Mac to
+   read the backup and write Rob's `flash/jl_692x.bin`. The pedal version only reproduces what
+   that proved.
+2. **Entering UBOOT:** the JieLi updater dongle is a bit-bang of the 16-bit key 0x16EF on D+ and
+   D- (clock on one, data on the other) until the chip acknowledges by pulling both low for one
+   to two milliseconds; see kagaimiq's `how-to-enter-uboot.md` and Christian Kramer's AC690X
+   repository for the timing. On the pedal this means detaching the USB PHY, driving GPIO 19
+   and 20 as plain outputs for the wiggle, then handing them back and installing the host stack.
+   Maintenance boots do not install the USB host today, so this runs as its own bounded boot,
+   the way `AUDIO TRY` does.
+3. **Talking UBOOT:** the chip enumerates as a mass-storage-style device (product strings
+   `UBOOT`, `UDISK` or `DEVICE` in kagaimiq's tool). The protocol is bulk-only transport: a
+   command block out, a data phase, a status block in, with the vendor SCSI opcodes
+   `jl-uboot-tool` sends. A few hundred lines on top of the pedal's existing host stack; no
+   general SCSI or filesystem code.
+4. **Safety:** read all 512 KiB to the SD card first, refuse to proceed if the read fails or
+   the SD card is absent, write, read back and compare, and say plainly in the command's reply
+   what is about to be written into whose hardware. Test on two units before anyone else runs
+   it.
+5. **The image:** from the SD card (`/sdcard/momix/`), never embedded in the pedal's flash. It
+   contains JieLi's closed SDK libraries and Rob's repository has no license; fetch it at setup
+   time with his blessing, as the existing capture fetcher does for models.
+6. **Command:** a maintenance-mode `MOMIX FLASH` next to `AUDIO TRY` in `remote_service.cpp`,
+   with `MOMIX BACKUP` as the read-only half for people who only want the dump.
+
 ## Before the next session
 
 - Pick up the MOMIX. Dump the stock descriptors on the Mac with the script (needs libusb
