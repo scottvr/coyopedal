@@ -41,6 +41,9 @@ are not meant for the device.
 
 ### Pin map (carrier silkscreen, confirmed by the vendor code)
 
+The silkscreen table itself, in the socket's physical order, is in `pinouts.md`; this is the same
+information grouped by function.
+
 | Function                  | GPIOs                                                                           |
 | ------------------------- | ------------------------------------------------------------------------------- |
 | LCD SPI                   | MOSI 20, SCK 21, CS 47, DC 0                                                    |
