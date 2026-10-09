@@ -33,6 +33,7 @@
 #include "audio/processor.hpp"
 #include "audio/tuner.h"
 #include "board_ui.h"
+#include "uac1.hpp"
 #include "uac2_pcm.hpp"
 #include "usb_audio.h"
 #include "internal_speaker.h"
@@ -106,8 +107,8 @@ constexpr std::size_t kInputRingFrames = 2048;
 // away valid audio; it costs 4 KiB of internal SRAM.
 constexpr std::size_t kOutputRingFrames = 512;
 constexpr std::size_t kStartupFrames = kPlaybackUrbCount * kPacketsPerUrb * kFramesPerPacket;
-// UAC1 playback is trimmed back to the startup fill, one packet per playback
-// URB, once it drifts more than a packet above it.
+// The iRig HD 2's playback is trimmed back to the startup fill, one packet per
+// playback URB, once it drifts more than a packet above it.
 constexpr std::size_t kTargetOutputRingFrames = kStartupFrames;
 constexpr std::size_t kOutputTrimHighWaterFrames = kTargetOutputRingFrames + kFramesPerPacket;
 // Capture and playback share the interface's clock, so the producer and the
@@ -141,11 +142,24 @@ constexpr std::int64_t kStatsPeriodUs = 5000000;
 
 enum class AudioProtocol : std::uint8_t {
     None = 0,
-    Uac1 = 1,
-    Uac2 = 2,
+    // The iRig HD 2's fixed layout: interfaces, endpoints and sample formats
+    // are the constants above, not descriptors.
+    Hd2 = 1,
+    // Descriptor-driven streams. The class version decides how the sample
+    // rate is negotiated and nothing else: both run the same transfer path.
+    Uac1 = 2,
+    Uac2 = 3,
 };
 
 AudioProtocol audio_protocol{AudioProtocol::None};
+// Set with Uac1 and Uac2: the codecs are configured from the negotiated
+// formats, playback is primed with silence, and the output ring is held at
+// the targets the descriptor-driven path was measured with.
+bool descriptor_driven{};
+// UAC1 negotiates the rate per streaming endpoint, and only on the endpoints
+// whose class-specific descriptor advertises the control.
+bool uac1_capture_rate_control{};
+bool uac1_playback_rate_control{};
 std::uint16_t connected_vendor_id{};
 std::uint16_t connected_product_id{};
 usb_speed_t connected_speed{USB_SPEED_LOW};
@@ -941,19 +955,9 @@ esp_err_t set_endpoint_rate(const std::uint8_t endpoint) noexcept {
     return control_out(setup, rate.data(), rate.size());
 }
 
-// Descriptor negotiation runs on the setup task; callbacks still run on the
-// USB task. Keep exact response-length checks for clock/selector requests.
-bool uac2_control(uint8_t ac, bool in, uint8_t request, uint8_t selector, uint8_t entity,
-                  uint8_t* bytes, size_t size, uint8_t channel = 0) {
-    usb_setup_packet_t setup{};
-    setup.bmRequestType = (in ? USB_BM_REQUEST_TYPE_DIR_IN : USB_BM_REQUEST_TYPE_DIR_OUT) |
-                          USB_BM_REQUEST_TYPE_TYPE_CLASS | USB_BM_REQUEST_TYPE_RECIP_INTERFACE;
-    setup.bRequest = request;
-    setup.wValue = uint16_t(selector) << 8 | channel;
-    setup.wIndex = uint16_t(entity) << 8 | ac;
-    setup.wLength = size;
-    if (!in)
-        return control_out(setup, bytes, size) == ESP_OK;
+// A class request that reads. The exact response length is required: a short
+// answer to a clock, selector or rate query is as wrong as none.
+bool control_in(const usb_setup_packet_t& setup, uint8_t* bytes, size_t size) {
     usb_transfer_t* transfer{};
     if (usb_host_transfer_alloc(sizeof(setup) + size, 0, &transfer) != ESP_OK)
         return false;
@@ -981,6 +985,77 @@ bool uac2_control(uint8_t ac, bool in, uint8_t request, uint8_t selector, uint8_
     return ok;
 }
 
+// Descriptor negotiation runs on the setup task; callbacks still run on the
+// USB task. The request shape is shared by UAC1 and UAC2: selector and channel
+// in wValue, entity and interface in wIndex.
+bool uac2_control(uint8_t ac, bool in, uint8_t request, uint8_t selector, uint8_t entity,
+                  uint8_t* bytes, size_t size, uint8_t channel = 0) {
+    usb_setup_packet_t setup{};
+    setup.bmRequestType = (in ? USB_BM_REQUEST_TYPE_DIR_IN : USB_BM_REQUEST_TYPE_DIR_OUT) |
+                          USB_BM_REQUEST_TYPE_TYPE_CLASS | USB_BM_REQUEST_TYPE_RECIP_INTERFACE;
+    setup.bRequest = request;
+    setup.wValue = uint16_t(selector) << 8 | channel;
+    setup.wIndex = uint16_t(entity) << 8 | ac;
+    setup.wLength = size;
+    if (!in)
+        return control_out(setup, bytes, size) == ESP_OK;
+    return control_in(setup, bytes, size);
+}
+
+// UAC1: GET_CUR(SAMPLING_FREQ) from the streaming endpoint, 3 bytes LE.
+bool get_endpoint_rate(const std::uint8_t endpoint, std::uint32_t& rate) noexcept {
+    usb_setup_packet_t setup{};
+    setup.bmRequestType = USB_BM_REQUEST_TYPE_DIR_IN | USB_BM_REQUEST_TYPE_TYPE_CLASS |
+                          USB_BM_REQUEST_TYPE_RECIP_ENDPOINT;
+    setup.bRequest = 0x81; // GET_CUR
+    setup.wValue = 0x0100; // SAMPLING_FREQ_CONTROL
+    setup.wIndex = endpoint;
+    setup.wLength = 3;
+    std::array<std::uint8_t, 3> bytes{};
+    if (!control_in(setup, bytes.data(), bytes.size())) {
+        return false;
+    }
+    rate = static_cast<std::uint32_t>(bytes[0]) | (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+           (static_cast<std::uint32_t>(bytes[2]) << 16U);
+    return true;
+}
+
+// UAC1 sets the rate on the endpoint, and only where the class-specific
+// endpoint descriptor advertised the control: a device that runs one rate
+// stalls the request instead of ignoring it. The read back is advisory, since
+// UAC1 devices commonly stall GET_CUR on an endpoint while having honoured the
+// SET_CUR before it; a failed read is logged, a wrong one refused.
+esp_err_t negotiate_uac1_rates() noexcept {
+    struct Target {
+        std::uint8_t endpoint;
+        bool control;
+        const char* name;
+    };
+    const Target targets[] = {{playback_endpoint, uac1_playback_rate_control, "playback"},
+                              {capture_endpoint, uac1_capture_rate_control, "capture"}};
+    for (const auto& target : targets) {
+        if (!target.control) {
+            continue;
+        }
+        const esp_err_t set = set_endpoint_rate(target.endpoint);
+        if (set != ESP_OK) {
+            ESP_LOGE(kTag, "%s endpoint refused 48 kHz: %s", target.name, esp_err_to_name(set));
+            return set;
+        }
+        std::uint32_t rate{};
+        if (!get_endpoint_rate(target.endpoint, rate)) {
+            ESP_LOGW(kTag, "%s endpoint does not answer GET_CUR; trusting SET_CUR", target.name);
+        } else if (rate != kSampleRate) {
+            ESP_LOGE(kTag, "%s endpoint reports %lu Hz after SET_CUR 48000", target.name,
+                     static_cast<unsigned long>(rate));
+            return ESP_ERR_NOT_SUPPORTED;
+        } else {
+            ESP_LOGI(kTag, "%s endpoint confirmed 48 kHz", target.name);
+        }
+    }
+    return ESP_OK;
+}
+
 bool adopt_hd2_layout(const usb_config_desc_t* const config) noexcept {
     int offset = 0;
     const auto* const playback =
@@ -1000,7 +1075,8 @@ bool adopt_hd2_layout(const usb_config_desc_t* const config) noexcept {
     }
     playback_mps = playback_ep->wMaxPacketSize;
     capture_mps = capture_ep->wMaxPacketSize;
-    audio_protocol = AudioProtocol::Uac1;
+    audio_protocol = AudioProtocol::Hd2;
+    descriptor_driven = false;
     capture_interface = kHd2CaptureInterface;
     capture_alt = kHd2CaptureAlt;
     playback_interface = kHd2PlaybackInterface;
@@ -1065,6 +1141,101 @@ void open_feature_units(const uac2::Configuration& topology, const std::uint8_t 
     }
 }
 
+// A UAC1 device, found the way a UAC2 device is: from its descriptors, with no
+// identities. The topology arrives in the UAC2 module's shape, so pairing, the
+// Full Speed capacity check, the feature units and the codecs are the same
+// code. UAC1 differs in its clock model, which has none: every stream of a
+// function is taken to share the device's one clock, and the rate is set per
+// endpoint, only where the endpoint says it can be.
+bool adopt_uac1_layout(const usb_config_desc_t* config, usb_speed_t speed) {
+    uac1::Configuration discovered;
+    const auto error =
+        uac1::discover(reinterpret_cast<const uint8_t*>(config), config->wTotalLength, discovered);
+    if (error != uac2::Error::None) {
+        ESP_LOGW(kTag, "UAC1 discovery: %s", uac2::errorName(error));
+        dump_raw_descriptors(config);
+        return false;
+    }
+    const auto& topology = discovered.topology;
+    audio_protocol = AudioProtocol::Uac1;
+    descriptor_driven = true;
+    ESP_LOGI(kTag, "UAC1 topology: %u stream(s) %u terminal(s) %u feature unit(s)",
+             static_cast<unsigned>(topology.streams.size()),
+             static_cast<unsigned>(topology.terminals.size()),
+             static_cast<unsigned>(topology.features.size()));
+    dump_raw_descriptors(config);
+    for (const auto& pair : uac2::pairs(topology)) {
+        const auto* in_alt = uac1::alternateFor(discovered, pair.capture);
+        const auto* out_alt = uac1::alternateFor(discovered, pair.playback);
+        ESP_LOGI(kTag,
+                 "UAC1 candidate IN if=%u alt=%u ep=%02x %uch/%ubit/%uB mps=%lu sync=%u; "
+                 "OUT if=%u alt=%u ep=%02x %uch/%ubit/%uB mps=%lu sync=%u fb=%02x",
+                 pair.capture.interface, pair.capture.alternate, pair.capture.data.address,
+                 pair.capture.format.channels, pair.capture.format.bits,
+                 pair.capture.format.subslot, (unsigned long)pair.capture.data.maxBytes,
+                 pair.capture.data.sync, pair.playback.interface, pair.playback.alternate,
+                 pair.playback.data.address, pair.playback.format.channels,
+                 pair.playback.format.bits, pair.playback.format.subslot,
+                 (unsigned long)pair.playback.data.maxBytes, pair.playback.data.sync,
+                 pair.playback.feedback.address);
+        if (in_alt == nullptr || out_alt == nullptr) {
+            continue;
+        }
+        const auto fifo = pedalboard_usb_fifo_capacity();
+        if (speed != USB_SPEED_FULL || !uac2::fullSpeed48k(pair, fifo.input, fifo.output)) {
+            ESP_LOGW(kTag, "UAC1 alternate cannot carry 48 kHz with the S3 1ms service loop");
+            continue;
+        }
+        // The graph runs at 48 kHz and nothing resamples: an alternate that
+        // lists other rates only is refused rather than reinterpreted.
+        if (!in_alt->supports(kSampleRate) || !out_alt->supports(kSampleRate)) {
+            ESP_LOGW(kTag, "UAC1 alternate does not offer 48 kHz");
+            continue;
+        }
+        if (in_alt->maxPacketsOnly || out_alt->maxPacketsOnly) {
+            ESP_LOGW(kTag, "UAC1 endpoint asks for full packets only; sizes may still vary");
+        }
+        open_feature_units(topology, pair.capture.control);
+        if (pair.playback.control != pair.capture.control) {
+            open_feature_units(topology, pair.playback.control);
+        }
+        if (!capture_codec.configure(pair.capture.format) ||
+            !playback_codec.configure(pair.playback.format))
+            continue;
+        capture_interface = pair.capture.interface;
+        capture_alt = pair.capture.alternate;
+        playback_interface = pair.playback.interface;
+        playback_alt = pair.playback.alternate;
+        capture_endpoint = pair.capture.data.address;
+        playback_endpoint = pair.playback.data.address;
+        feedback_endpoint = pair.playback.feedback.address;
+        capture_mps = pair.capture.data.maxBytes;
+        playback_mps = pair.playback.data.maxBytes;
+        feedback_mps = pair.playback.feedback.maxBytes;
+        capture_frame_bytes = pair.capture.format.frameBytes();
+        playback_frame_bytes = pair.playback.format.frameBytes();
+        nominal_frames_per_packet = kFramesPerPacket;
+        feedback_16_16 = kFramesPerPacket << 16;
+        uac1_capture_rate_control = in_alt->rateControl;
+        uac1_playback_rate_control = out_alt->rateControl;
+        // The shared clock is an assumption here, not a traversed fact, so an
+        // explicit feedback endpoint outranks the capture packet counts. An
+        // asynchronous sink without one follows capture, as on UAC2; adaptive
+        // and synchronous sinks take the USB frame cadence.
+        capture_paced_playback = pair.playback.data.sync == 1 && feedback_endpoint == 0;
+        capture_packet_read = capture_packet_write = 0;
+        transport_supported = true;
+        ESP_LOGI(kTag, "UAC1 selected 48 kHz; rate control in=%d out=%d; playback pacing=%s",
+                 uac1_capture_rate_control ? 1 : 0, uac1_playback_rate_control ? 1 : 0,
+                 capture_paced_playback ? "capture packets"
+                 : feedback_endpoint    ? "explicit feedback"
+                                        : "USB frames");
+        return true;
+    }
+    ESP_LOGE(kTag, "no supported UAC1 duplex alternate");
+    return false;
+}
+
 bool adopt_uac2_layout(const usb_config_desc_t* config, usb_speed_t speed) {
     uac2::Configuration topology;
     if (config->wTotalLength > 4096) {
@@ -1074,11 +1245,11 @@ bool adopt_uac2_layout(const usb_config_desc_t* config, usb_speed_t speed) {
     const auto error =
         uac2::discover(reinterpret_cast<const uint8_t*>(config), config->wTotalLength, topology);
     if (error != uac2::Error::None) {
-        ESP_LOGW(kTag, "UAC2 discovery: %s", uac2::errorName(error));
-        dump_raw_descriptors(config);
-        return false;
+        ESP_LOGW(kTag, "UAC2 discovery: %s; trying UAC1", uac2::errorName(error));
+        return adopt_uac1_layout(config, speed);
     }
     audio_protocol = AudioProtocol::Uac2;
+    descriptor_driven = true;
     // Audio mode has no network, so the topology and raw descriptors go to the
     // reboot-surviving log ring, to be read from maintenance mode.
     ESP_LOGI(kTag, "UAC2 topology: %u stream(s) %u terminal(s) %u feature unit(s) %u clock(s)",
@@ -1273,13 +1444,12 @@ IRAM_ATTR void fill_playback_urb(usb_transfer_t* const transfer) noexcept {
     // its own high-water mark, so that phase movement never discards valid
     // audio (which would reappear later as a silent gap).
     const std::size_t available = output_ring.available();
-    const bool uac1_clamp =
-        audio_protocol == AudioProtocol::Uac1 && available > kOutputTrimHighWaterFrames;
-    const bool uac2_clamp =
-        audio_protocol == AudioProtocol::Uac2 && available > kUac2OutputHighWaterFrames;
-    if (uac1_clamp || uac2_clamp) {
+    const bool hd2_clamp =
+        audio_protocol == AudioProtocol::Hd2 && available > kOutputTrimHighWaterFrames;
+    const bool generic_clamp = descriptor_driven && available > kUac2OutputHighWaterFrames;
+    if (hd2_clamp || generic_clamp) {
         const std::size_t discarded = output_ring.discard(
-            available - (uac1_clamp ? kTargetOutputRingFrames : kUac2OutputTargetFrames));
+            available - (hd2_clamp ? kTargetOutputRingFrames : kUac2OutputTargetFrames));
         if (account_audio) {
             trimmed_frames += discarded;
         }
@@ -1288,7 +1458,7 @@ IRAM_ATTR void fill_playback_urb(usb_transfer_t* const transfer) noexcept {
     std::uint32_t total_frames = 0;
     for (int packet = 0; packet < kPacketsPerUrb; ++packet) {
         std::uint32_t frames = kFramesPerPacket;
-        if (audio_protocol == AudioProtocol::Uac2 && !capture_paced_playback) {
+        if (descriptor_driven && !capture_paced_playback) {
             feedback_accumulator += feedback_16_16;
             frames = feedback_accumulator >> 16U;
             feedback_accumulator &= 0xffffU;
@@ -1325,10 +1495,9 @@ IRAM_ATTR void fill_playback_urb(usb_transfer_t* const transfer) noexcept {
         uac2_output_primed = false;
     else if (!uac2_output_primed && available >= kUac2OutputTargetFrames)
         uac2_output_primed = true;
-    const bool consume = audio_protocol != AudioProtocol::Uac2 || paused || uac2_output_primed;
+    const bool consume = !descriptor_driven || paused || uac2_output_primed;
     std::size_t popped = 0;
-    if (audio_protocol == AudioProtocol::Uac2 &&
-        (playback_codec.nativeStereo && playback_codec.format.bits >= 16)) {
+    if (descriptor_driven && (playback_codec.nativeStereo && playback_codec.format.bits >= 16)) {
         // The ring already contains the device's final eight-byte UAC2 frames.
         // Copy them straight into the DMA buffer and publish the ring read once.
         if (consume)
@@ -1338,8 +1507,7 @@ IRAM_ATTR void fill_playback_urb(usb_transfer_t* const transfer) noexcept {
                     (total_frames - popped) * sizeof(std::uint64_t));
     }
     int total_bytes = 0;
-    if (audio_protocol == AudioProtocol::Uac2 &&
-        (playback_codec.nativeStereo && playback_codec.format.bits >= 16)) {
+    if (descriptor_driven && (playback_codec.nativeStereo && playback_codec.format.bits >= 16)) {
         total_bytes = static_cast<int>(total_frames * sizeof(std::uint64_t));
     } else {
         std::array<std::uint64_t, (kFramesPerPacket + 8U) * kPacketsPerUrb> stereo_frames;
@@ -1350,10 +1518,10 @@ IRAM_ATTR void fill_playback_urb(usb_transfer_t* const transfer) noexcept {
         for (int packet = 0; packet < kPacketsPerUrb; ++packet) {
             const std::uint32_t frames = packet_frames[packet];
             std::uint8_t* const data = transfer->data_buffer + total_bytes;
-            if (audio_protocol == AudioProtocol::Uac2 && playback_codec.packedPcm()) {
+            if (descriptor_driven && playback_codec.packedPcm()) {
                 encode_packed_pcm(data, stereo_frames.data() + source_frame, frames,
                                   playback_codec.format.subslot, playback_codec.format.channels);
-            } else if (audio_protocol == AudioProtocol::Uac2) {
+            } else if (descriptor_driven) {
                 playback_codec.playback(data, stereo_frames.data() + source_frame, frames);
             } else
                 for (std::uint32_t frame = 0; frame < frames; ++frame) {
@@ -1472,7 +1640,7 @@ IRAM_ATTR void capture_done(usb_transfer_t* const transfer) noexcept {
     const bool account_audio = !paused && diagnostic_accounting_active();
     if constexpr (kPacketsPerUrb == 1) {
         const usb_isoc_packet_desc_t& descriptor = transfer->isoc_packet_desc[0];
-        if (audio_protocol == AudioProtocol::Uac2 && capture_codec.nativeMono &&
+        if (descriptor_driven && capture_codec.nativeMono &&
             descriptor.status == USB_TRANSFER_STATUS_COMPLETED) {
             // Preserve the mono 32-bit fast path after descriptor validation.
             if (descriptor.actual_num_bytes < 0 || descriptor.actual_num_bytes > capture_mps ||
@@ -1496,8 +1664,8 @@ IRAM_ATTR void capture_done(usb_transfer_t* const transfer) noexcept {
     bool decoded = false;
     if constexpr (kPacketsPerUrb == 1) {
         const usb_isoc_packet_desc_t& descriptor = transfer->isoc_packet_desc[0];
-        if (audio_protocol == AudioProtocol::Uac2 && !capture_codec.nativeMono &&
-            capture_codec.packedPcm() && descriptor.status == USB_TRANSFER_STATUS_COMPLETED) {
+        if (descriptor_driven && !capture_codec.nativeMono && capture_codec.packedPcm() &&
+            descriptor.status == USB_TRANSFER_STATUS_COMPLETED) {
             // Signed PCM in 3- or 4-byte slots (the XTONE Pro's 24-bit
             // stereo, for example), 48 frames a millisecond on the core that
             // also runs stage A. The general loop below decodes each frame
@@ -1559,8 +1727,7 @@ IRAM_ATTR void capture_done(usb_transfer_t* const transfer) noexcept {
             decoded = true;
         }
     }
-    if (!decoded && (audio_protocol != AudioProtocol::Uac2 || !capture_codec.nativeMono ||
-                     kPacketsPerUrb != 1)) {
+    if (!decoded && (!descriptor_driven || !capture_codec.nativeMono || kPacketsPerUrb != 1)) {
         for (int packet = 0; packet < kPacketsPerUrb; ++packet) {
             const usb_isoc_packet_desc_t& descriptor = transfer->isoc_packet_desc[packet];
             if (descriptor.status != USB_TRANSFER_STATUS_COMPLETED) {
@@ -1583,7 +1750,7 @@ IRAM_ATTR void capture_done(usb_transfer_t* const transfer) noexcept {
             for (int frame = 0; frame < frames; ++frame) {
                 const std::uint8_t* const slot = data + frame * capture_frame_bytes;
                 float sample{};
-                if (audio_protocol == AudioProtocol::Uac2) {
+                if (descriptor_driven) {
                     sample =
                         static_cast<float>(capture_codec.capture(slot, 0)) * (1.0F / 2147483648.0F);
                     if (capture_output_levels.load(std::memory_order_relaxed)) {
@@ -1721,6 +1888,19 @@ esp_err_t allocate_stream_transfers() noexcept {
     return ESP_OK;
 }
 
+const char* protocol_name() noexcept {
+    switch (audio_protocol) {
+    case AudioProtocol::Hd2:
+        return "iRig HD 2 UAC1";
+    case AudioProtocol::Uac1:
+        return "UAC1";
+    case AudioProtocol::Uac2:
+        return "UAC2";
+    default:
+        return "none";
+    }
+}
+
 esp_err_t start_streams() noexcept {
     if (!transport_supported) {
         return ESP_ERR_NOT_SUPPORTED;
@@ -1756,7 +1936,7 @@ esp_err_t start_streams() noexcept {
         ESP_LOGE(kTag, "could not select capture alt: %s", esp_err_to_name(result));
         return result;
     }
-    if (audio_protocol == AudioProtocol::Uac1) {
+    if (audio_protocol == AudioProtocol::Hd2) {
         result = set_endpoint_rate(playback_endpoint);
         if (result != ESP_OK) {
             ESP_LOGW(kTag, "playback rate SET_CUR failed: %s", esp_err_to_name(result));
@@ -1766,15 +1946,21 @@ esp_err_t start_streams() noexcept {
             ESP_LOGW(kTag, "capture rate SET_CUR failed: %s", esp_err_to_name(result));
         }
     }
+    if (audio_protocol == AudioProtocol::Uac1) {
+        result = negotiate_uac1_rates();
+        if (result != ESP_OK) {
+            return result;
+        }
+    }
     result = allocate_stream_transfers();
     if (result != ESP_OK) {
         ESP_LOGE(kTag, "could not allocate isochronous URBs: %s", esp_err_to_name(result));
         return result;
     }
-    // Start duplex UAC2 output independently of capture. Some devices do not
+    // Start descriptor-driven duplex output independently of capture. Some devices do not
     // produce input until OUT transactions arrive. Silence primes the transport;
     // callbacks retain the normal DSP prefill before consuming real samples.
-    if (audio_protocol == AudioProtocol::Uac2) {
+    if (descriptor_driven) {
         std::array<uint64_t, kFramesPerPacket * kPacketsPerUrb> silence{};
         uac2_output_primed = false;
         playback_started = true;
@@ -1794,11 +1980,11 @@ esp_err_t start_streams() noexcept {
             return ESP_FAIL;
         }
     }
-    if (audio_protocol == AudioProtocol::Uac2) {
+    if (descriptor_driven) {
         for (auto* transfer : playback_urbs)
             if (submit_transfer(transfer) != ESP_OK)
                 return ESP_FAIL;
-        ESP_LOGI(kTag, "UAC2 playback primed with silence before capture");
+        ESP_LOGI(kTag, "%s playback primed with silence before capture", protocol_name());
     }
     for (usb_transfer_t* const transfer : capture_urbs) {
         if (submit_transfer(transfer) != ESP_OK) {
@@ -1808,7 +1994,7 @@ esp_err_t start_streams() noexcept {
     ESP_LOGI(kTag,
              "USB %s streaming: 48 kHz mono in -> NAM -> stereo out; "
              "%d packet/URB",
-             audio_protocol == AudioProtocol::Uac2 ? "UAC2" : "iRig HD 2 UAC1", kPacketsPerUrb);
+             protocol_name(), kPacketsPerUrb);
     return ESP_OK;
 }
 
@@ -1947,6 +2133,9 @@ void teardown_device() noexcept {
     // Restore the declared defaults; a later adopt_* overwrites what it uses,
     // and anything it leaves alone must not carry over from the last device.
     audio_protocol = AudioProtocol::None;
+    descriptor_driven = false;
+    uac1_capture_rate_control = false;
+    uac1_playback_rate_control = false;
     connected_vendor_id = 0;
     connected_product_id = 0;
     connected_speed = USB_SPEED_LOW;

@@ -7,15 +7,16 @@ formats work, how transfers are scheduled and what the transport cannot do.
 The DSP side is described in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 The transport is in `src/native/drivers/usb_audio.cpp`. Descriptor discovery and
-sample conversion are in `src/native/drivers/uac2.hpp` and `uac2_pcm.hpp`, which
-have no device identities, no OS dependencies and no allocation at streaming
-time.
+sample conversion are in `src/native/drivers/uac2.hpp`, `uac1.hpp` and
+`uac2_pcm.hpp`, which have no device identities, no OS dependencies and no
+allocation at streaming time.
 
 ## Discovery
 
-USB Audio Class 2 interfaces are found from their descriptors. There is no
-vendor or product allowlist. The only device-specific path is the iRig HD 2,
-which predates UAC2 support and is driven through a fixed UAC1 layout (below).
+USB Audio Class 2 and Class 1 interfaces are found from their descriptors.
+There is no vendor or product allowlist. The only device-specific path is the
+iRig HD 2, which predates descriptor discovery and is driven through a fixed
+UAC1 layout (below).
 
 When a device enumerates, the active configuration descriptor is parsed:
 
@@ -47,6 +48,24 @@ The first pair that passes every step is used. The log records the topology,
 each candidate and the reason a candidate was skipped. If nothing qualifies,
 the raw descriptors are logged so the case can be diagnosed from maintenance
 mode.
+
+A device that is not UAC2 is tried as UAC1. The same pairing and transport-fit
+rules apply to its AudioControl header, terminals, feature units, Format Type I
+alternates and isochronous endpoints, with two differences that come from the
+class itself:
+
+- **Clock.** UAC1 has no clock entities, so every stream of a function is taken
+  to share the device's one clock. The 48 kHz requirement is checked against
+  the rates the alternate lists (discrete or continuous), and the rate is set
+  with the UAC1 endpoint request only on an endpoint whose class-specific
+  descriptor advertises the sampling-frequency control. A device that runs one
+  rate has no such control and stalls the request; it is not sent. The value is
+  read back where the device answers, and a read that fails is logged rather
+  than treated as a refusal.
+- **Pacing.** Because the shared clock is assumed rather than traversed, an
+  explicit feedback endpoint outranks capture packet counts. An asynchronous
+  sink without one follows capture; adaptive and synchronous sinks take the USB
+  frame cadence.
 
 ## Supported formats
 
@@ -82,6 +101,11 @@ so only the Full Speed capture is representative of what the pedal sees.
 The iRig HD 2 is recognised by its vendor and product ID and uses fixed
 interfaces and endpoints, with the sample rate set on each endpoint in the
 UAC1 way.
+
+UAC1 discovery has been verified against the JOYO MOMIX CAB's descriptors
+(vendor e5b7, product 0811: stereo 16-bit 48 kHz both ways, adaptive endpoints
+of 192 bytes, no feedback, no rate control) offline, from its firmware image.
+Streaming with that interface has not yet been run on hardware.
 
 Any other class-compliant interface that offers a 48 kHz duplex pair meeting
 the requirements above should work. Reports of interfaces that do or do not
@@ -135,7 +159,12 @@ output has a gap.
 - **48 kHz only.** Interfaces that cannot run at 48 kHz are refused rather
   than resampled.
 - **One clock.** Capture and playback must resolve to the same clock. There is
-  no asynchronous sample-rate converter.
+  no asynchronous sample-rate converter. For UAC1 the shared clock is an
+  assumption, since the class has no way to state it.
+- **UAC1 topology.** Mixer, selector, processing and extension units are not
+  traversed; a stream is linked to its USB streaming terminal directly, and the
+  feature units of the function are unmuted and set to 0 dB as for UAC2. The
+  MaxPacketsOnly endpoint attribute is logged, not honoured.
 - **Duplex only.** Input-only and output-only devices are not used.
 - **Packet sizes.** Endpoints must use 1 ms intervals, carry at least 48
   frames, and fit the controller's FIFO. Capture packets are limited to 96
@@ -153,8 +182,10 @@ configuration descriptors (`tests/usb/`) under AddressSanitizer and
 UndefinedBehaviorSanitizer. The tests cover the iRig HD X and XTONE Pro
 topologies (including the XTONE's Full Speed configuration), renumbered entity
 IDs, truncated and malformed lengths, clock traversal, rate negotiation, packet
-capacity checks and channel mapping. They do not show that a device streams
-cleanly.
+capacity checks and channel mapping, and the UAC1 path against the MOMIX CAB's
+descriptors: renumbering, discrete and continuous rate lists, per-endpoint rate
+control and a composite device with an unrelated interface. They do not show
+that a device streams cleanly.
 
 On the device:
 

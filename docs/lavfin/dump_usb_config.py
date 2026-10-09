@@ -9,7 +9,7 @@ Live capture needs pyusb and libusb:
 
 Offline, parse an existing fixture:
 
-    python3 docs/lavfin/dump_usb_config.py --parse docs/lavfin/momix-cab-custom-fw-configuration.bin
+    python3 docs/lavfin/dump_usb_config.py --parse tests/usb/momix-cab-custom-fw-configuration.bin
 
 The summary names every descriptor the pedal's discovery cares about: interfaces and
 alternates, audio-class headers, terminals, feature units, formats, isochronous endpoints

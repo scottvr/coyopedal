@@ -12,8 +12,10 @@ pinout table, `IMG_4707.jpeg` the board layout).
 - First firmware milestone is a headless composed target. The screen, touch and speaker need
   upstream Geastack work before they can be used.
 - The audio interface will be a JOYO MOMIX CAB running Rob Murru's custom firmware. It is a
-  UAC1 device, so the pedal needs generic UAC1 discovery first; its descriptors are fully known
-  (below) and a fixture can be built from them.
+  UAC1 device. Generic UAC1 discovery now exists in the pedal (`src/native/drivers/uac1.hpp`,
+  wired into `usb_audio.cpp` as the fallback when UAC2 discovery declines a device), with a
+  host test against the MOMIX fixture in `tests/usb/`. Streaming on hardware is still to be
+  done.
 
 ## The kit
 
@@ -213,8 +215,9 @@ EXPANDER`, `GEA_EMBEDDED_NO_DISPLAY=1` when there is neither display nor canvas,
   Needs generic UAC1 discovery; must not send the sampling-frequency request; playback at the
   USB frame cadence; capture uses channel 0 of the stereo 16-bit stream.
 
-Fixture candidate (config header synthesized, function bytes verbatim from
-`flash/sdk.app` 0x021aa0 to 0x021b58 of the custom firmware repository):
+Fixture (now `tests/usb/momix-cab-custom-fw-configuration.bin`; config header synthesized,
+function bytes verbatim from `flash/sdk.app` 0x021aa0 to 0x021b58 of the custom firmware
+repository):
 
 ```text
 09 02 c1 00 03 01 00 80 32 09 04 01 00 00 01 01 00 00 0a 24 01 00 01 47 00 02 02 03 0c 24
@@ -321,9 +324,31 @@ docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
 - Wi-Fi credentials for the maintenance API: `npm run remote:configure -- --ssid YOUR_WIFI`
   writes the gitignored `src/native/services/remote_config.h`. The headless devkit has no
   other way to be configured.
-- Toolchain: the Geastack CLI runs through `npx gea` from `node_modules`; ESP-IDF 5.5.4 is
-  under `~/.espressif/v5.5.4`. Run `npx gea doctor` and `npm run format:setup`, and put
-  clang-format 22.1.8 on the PATH for the C++ format check.
+- Toolchain: the Geastack CLI runs through `npx gea` from `node_modules`. ESP-IDF 5.5.4 is
+  installed by the Espressif installer under `~/.espressif/v5.5.4`, which the CLI only finds
+  with its environment spelled out:
+
+  ```bash
+  export IDF_PATH=$HOME/.espressif/v5.5.4/esp-idf
+  export IDF_PYTHON_ENV_PATH=$HOME/.espressif/python_env/idf5.5_py3.14_en
+  export IDF_TOOLS_PATH=$HOME/.espressif
+  export GEA_ESP_IDF_VERSION=v5.5.4
+  ```
+
+  Two more one-time fixes were needed on this machine: the installer skipped the RISC-V gdb
+  that `idf_tools.py export` insists on (`idf_tools.py install riscv32-esp-elf-gdb` adds it),
+  and the installer keeps `espidf.constraints.v5.5.txt` under `~/.espressif/tools/` while the
+  CLI's tools root is `~/.espressif/`, so the file was copied up one level for idf.py's
+  dependency check. Upstream builds against ESP-IDF 6.0.2, so a 5.5.4 build is a compile
+  check, not a release build. With 5.5.4 the pedal's own sources, including the changed USB
+  driver, compile warning-free, but the link never happens: Geastack 0.1.87's ES8311 binding
+  sets the I2S port to -1 expecting ESP-IDF 6's `I2S_NUM_AUTO`, which 5.5 defines as a
+  positive enumerator, so its static assertion fails. A full firmware build needs ESP-IDF
+  6.0.2, installed with `npx gea setup --esp-idf`. `.gea/boards.json` (gitignored) holds a build-only `amoled` alias with no USB serial.
+  `npm run format:setup` has not been run and clang-format 22.1.8 is not on the PATH; the
+  ESP toolchain's clang-format 19 at `~/.espressif/tools/esp-clang/.../bin/clang-format`
+  produces the same layout for the files touched so far.
+
 - MOMIX flashing plan: dongle or Arduino emulation, Windows for `isd_download.exe`, USMI key
   patch, stock flash backup first.
 - Decisions for the carrier mod: lift pin 0 so BOOT stays the footswitch, which jumper
@@ -333,7 +358,9 @@ docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
 
 1. Dump the MOMIX's live descriptors (on the Mac, then on the devkit pedal via the maintenance
    log) and compare with the fixture above.
-2. Implement generic UAC1 discovery in the pedal with that fixture; test on the devkit pedal.
+2. Generic UAC1 discovery is implemented and host-tested; run it on the devkit pedal with the
+   MOMIX, then compare the live descriptors with the fixture and update the fixture if the
+   run-time header differs.
 3. Hardware mod on the kit; register the alias; build the headless composed target; verify
    the headless build still compiles with the internal-speaker code.
 4. Upstream Geastack: SPI ST7789/ILI9341 panel for composed targets, FT6336 adapter, codec-less

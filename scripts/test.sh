@@ -5,7 +5,8 @@ mkdir -p build
 c++ -std=c++20 -O1 -g -fsanitize=address,undefined -pthread -Isrc \
   src/audio/cabinet_ir.cpp src/audio/ir_wav.cpp tests/cabinet_ir_test.cpp -o build/cabinet_ir_test
 build/cabinet_ir_test
-for spec in 'uac2_test hdx-dma4-configuration' 'xtone_test xtone-pro-1.1.0-configuration'; do
+for spec in 'uac2_test hdx-dma4-configuration' 'xtone_test xtone-pro-1.1.0-configuration' \
+  'uac1_test momix-cab-custom-fw-configuration'; do
   read -r test fixture <<< "$spec"
   c++ -std=c++20 -O1 -g -fsanitize=address,undefined -Isrc "tests/usb/$test.cpp" -o "build/$test"
   "build/$test" "tests/usb/$fixture.bin"
