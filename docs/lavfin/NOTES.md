@@ -357,8 +357,14 @@ docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
   profile's choices exactly (capture interface 2 alt 2, playback interface 1 alt 1, rate
   request sent unconditionally and allowed to fail, playback trimmed to the startup fill),
   then delete the fixed-profile code. Descriptor-level equivalence needs a dump from an HD 2
-  owner as a fixture; streaming equivalence needs the device, which upstream has. Present
-  that as a PR to be verified by them rather than claiming it works. `.gea/boards.json` (gitignored) holds a build-only `amoled` alias with no USB serial.
+  owner as a fixture; streaming equivalence needs the device, which upstream has.
+  Sequence agreed on 2026-10-09: before any PR, write to the author about the work, ask for a
+  descriptor dump of his HD 2 (the branch's own maintenance log dumps it, or `lsusb -v`), and
+  ask whether he wants to test, with a plain account of the streaming and latency state:
+  the generic path uses the UAC2 ring targets and frame-cadence pacing where the profile
+  trimmed to the startup fill. For that test the fork needs a switch that routes the HD 2
+  through the generic path instead of the VID:PID profile, so he can compare the two. Offer
+  the PR only if that comes back good. `.gea/boards.json` (gitignored) holds a build-only `amoled` alias with no USB serial.
   `npm run format:setup` has not been run and clang-format 22.1.8 is not on the PATH; the
   ESP toolchain's clang-format 19 at `~/.espressif/tools/esp-clang/.../bin/clang-format`
   produces the same layout for the files touched so far.
