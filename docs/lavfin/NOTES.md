@@ -367,11 +367,23 @@ v6.0.2` with `IDF_PATH` and `IDF_TOOLS_PATH` pointing into that volume. Remove `
   `idf_tools.py install riscv32-esp-elf-gdb` with `IDF_TOOLS_PATH` set is part of setup. The
   harness shell does not see your exports; builds from here set `IDF_TOOLS_PATH`
   explicitly, and the CLI finds `~/esp/esp-idf` on its own.
-- Devkit build risk: the base target's CMake compiles the ES8311 binding whenever the app has
-  the audio capability (the pedal does, for the internal speaker), with no check that the
-  board declares a codec. A composed headless board emits no `board::audio`, so the first
-  `s3-devkit` build may fail inside Geastack's binding. If it does, that is an upstream Geastack
-  fix (gate the binding on `GEA_BOARD_HAS_AUDIO`), not something to patch here.
+- Devkit build, tried on 2026-10-09 against ESP-IDF 6.0.2: two blockers, both upstream.
+  1. `GEA_BOARD_HAS_POWER` redefined: the composed devkit's generated `board.h` defines it 0
+     while the app's root defines pass 1 for the AMOLED default, and `-Werror` stops the build.
+     The 2.41 and 3.5B boards carry a per-target override in `package.json`; the devkit never
+     got one when the root value flipped to 1. Fixed in this fork by adding
+     `boards["esp32-s3-devkit-n16r8"].defines.GEA_BOARD_HAS_POWER = 0` (a one-line PR for
+     upstream; the LAFVIN target needs the same entry).
+  2. Geastack's ES8311 binding: the base target's CMake adds `chip_bindings/audio/es8311.cpp`
+     whenever the app has the audio capability (the pedal does, for the internal speaker),
+     with no check that the board declares a codec. The composer never even emits a
+     `GEA_CUSTOM_TARGET_HAS_AUDIO` variable. On a headless composed board `board::audio` does
+     not exist and the binding fails to compile. The fix is in two Geastack packages: the CLI's
+     `custom-target.mjs` should emit `GEA_CUSTOM_TARGET_HAS_AUDIO`, and the 2.06 target's
+     CMake should fall back to `audio_runtime_stub.cpp` with `GEA_BOARD_HAS_SPEAKER=0` when a
+     custom target has no audio chip, even if the app asked for audio. Until then no headless
+     composed board builds for this app, which also means upstream's own `s3-devkit` target has
+     not built since the internal speaker landed. Worth telling the author.
 - iRig HD 2 profile retirement: no public descriptor dump of the HD 2 (1963:0033) exists, and
   we have no unit. The plan is a quirk table keyed by VID:PID whose HD 2 entry reproduces the
   profile's choices exactly (capture interface 2 alt 2, playback interface 1 alt 1, rate

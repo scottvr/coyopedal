@@ -346,6 +346,11 @@
           }
         },
         "boards": {
+          "esp32-s3-devkit-n16r8": {
+            "defines": {
+              "GEA_BOARD_HAS_POWER": 0
+            }
+          },
           "esp32-s3-touch-lcd-3.5b": {
             "cssDevicePixelRatio": 1.5,
             "defines": {
