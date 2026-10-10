@@ -13,10 +13,13 @@ are not meant for the device.
 
 - The kit can host the pedal, but only after a small reversible hardware mod (below), because
   the carrier board uses the ESP32-S3's native USB pins for the display and a battery divider.
-- First firmware milestone is a headless composed target. The screen, touch and speaker need
-  upstream Geastack work before they can be used.
-- The audio interface will be a JOYO MOMIX CAB running Rob Murru's custom firmware. It is a UAC1
-  device. Generic UAC1 discovery now exists in the pedal (`src/native/drivers/uac1.hpp`, wired into
+- Milestone 1, the headless composed target, builds (see below) and has not run on hardware
+  yet. The screen, touch and speaker need upstream Geastack work before they can be used.
+- The working list is `BACKLOG.md` beside this file: current sprint, backlog, done log.
+- The audio interface is a JOYO MOMIX CAB, a UAC1 device. Its stock firmware was dumped live on
+  2026-10-09 and the pedal's generic UAC1 path adopts it unchanged; Rob Murru's custom firmware
+  is only needed when the MOMIX headphone jack is the pedal's output (it removes the always-on
+  cab-simmed monitor). Generic UAC1 discovery now exists in the pedal (`src/native/drivers/uac1.hpp`, wired into
   `usb_audio.cpp` as the fallback when UAC2 discovery declines a device), with a host test against
   the MOMIX fixture in `tests/usb/`. Streaming on hardware is still to be done. Measured cost: the
   driver object grows by 12.7 KB of code (46.5 KB to 59.3 KB of `.text`), no change to data, and
@@ -81,11 +84,12 @@ are ADC_BAT and TFT_MOSI, and GPIO 0 (BOOT, the pedal's footswitch) is TFT_DC.
 ## Boards on hand (2026-10-09)
 
 "AMOLED" in the pedal's docs means the Waveshare ESP32-S3-Touch-AMOLED-2.06, the upstream
-reference board (alias `amoled`), which we do not have. Our test vehicle is the headless
-`s3-devkit` target instead:
+reference board (alias `amoled`), which we do not have. Our test vehicle is the kit's own dev
+board running the headless `lafvin` composed target (the generic `s3-devkit` target cannot
+build for this app until Geastack gates its ES8311 binding; see "What is missing upstream"):
 
-- **Development vehicle: an ESP32-S3-WROOM-1 N16R8 dev board** as `s3-devkit`
-  (`esp32-s3-devkit-n16r8`, a supported and measured configuration). Either one of the spare
+- **Development vehicle: an ESP32-S3-WROOM-1 N16R8 dev board**, the kit's own or a spare,
+  flashed with the `lafvin` target. Either one of the spare
   N16R8 boards, or the LAFVIN kit's own dev board pulled out of its carrier socket, which is
   reversible and frees its OTG port with no mod at all. Console and flashing go through the
   CH343 UART port; the pedal is configured over the maintenance API (Wi-Fi credentials via
@@ -148,18 +152,19 @@ EXPANDER`, `GEA_EMBEDDED_NO_DISPLAY=1` when there is neither display nor canvas,
 - Per AGENTS.md none of this can live in this repo (no board CMakeLists, partition CSV or
   display driver here).
 
-### Repo changes for milestone 1 (headless)
+### Repo changes for milestone 1 (headless): done 2026-10-09
 
-- Composed definition: extends esp32-s3, 16MB, octal PSRAM 80 MHz, console uart 0 at 115200,
-  SDMMC clk 39 cmd 38 data0 40, launcher button GPIO 0 active low, no display, no touch, no
-  power, no audio chip for now.
-- `package.json`: `partitionsByTarget` entry with the 16 MB layout (two 4 MB OTA slots, as the
-  other 16 MB boards), `boards.<id>` with `GEA_BOARD_HAS_POWER: 0`. Later, for the display:
-  native 240 x 320, landscape 320 x 240, `cssDevicePixelRatio` 1 (1.5 would leave 160 logical
-  pixels of height against the UI's 205 minimum).
-- `src/native/storage/sd_models.cpp`: also honor `GEA_BOARD_HAS_MICROSD` (the composer's
-  macro) so the board's SD pins are used instead of the AMOLED's hard-coded 2/1/3.
-- `.gea/boards.json` alias (machine-local), README and skill updates.
+- `boards/esp32-s3-lafvin-multimedia-2.8.json`: extends esp32-s3, 16MB, octal PSRAM 80 MHz,
+  console uart 0 at 115200, SDMMC clk 39 cmd 38 data0 40, launcher button GPIO 0 active low, no
+  display, no touch, no power; the PCM5100 declared as an ES8311 as a build stopgap.
+- `package.json`: the 16 MB partition table (two 4 MB OTA slots) and `GEA_BOARD_HAS_POWER: 0`
+  for the LAFVIN and devkit targets.
+- `src/native/storage/sd_models.cpp` reads the slot pins from every board's `board.h`
+  (`GPIO_NUM_NC` means no slot) instead of hard-coding the AMOLED's 2/1/3.
+- Still open: the `.gea/boards.json` alias needs the board's USB serial; README and skill
+  updates wait until something has run on hardware. For the display later: native 240 x 320,
+  landscape 320 x 240, `cssDevicePixelRatio` 1 (1.5 would leave 160 logical pixels of height
+  against the UI's 205 minimum).
 
 ## USB audio in the pedal (facts from `src/native/drivers/usb_audio.cpp`, `uac2.hpp`)
 
@@ -255,8 +260,7 @@ repository):
 - Streaming: a generic UAC1 device should run through the same codec objects, ring targets and
   pacing as UAC2, with the class version only choosing the control-request dialect. The
   existing `Uac1` branches encode HD 2 specifics (3-byte capture, 4-byte playback frames).
-- Tests: add the MOMIX fixture and a `uac1_test.cpp` under `tests/usb/`, wired into
-  `scripts/test.sh`, before any device work.
+- Tests (done): `tests/usb/uac1_test.cpp` runs against both MOMIX fixtures from `scripts/test.sh`.
 - Conventions when this goes upstream: CONTRIBUTING.md (`npm run check`, `npm test`, warning-free
   firmware build, clang-format 22.1.8, a hardware-testing statement in the PR), the CLA bot
   comment, and fold these notes into the canonical places: README board table,
@@ -308,20 +312,6 @@ What the host can do is choose how playback is paced, measure, and document. The
 Upstream shape: three separate PRs. Generic UAC1 with fixtures and tests; the clocking
 section, heartbeat interpretation and loopback test; the LAFVIN target. Each one only after
 it works well on the hardware here.
-
-## When the MOMIX is back
-
-1. Stock firmware first, on the Mac: `python3 docs/lavfin/dump_usb_config.py --out
-docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
-   `python3 -m pip install --user pyusb`). Compare with the synthesized fixture: interface
-   numbering, total length, bMaxPower (stock is expected to say 400 mA).
-2. Plug it into the devkit pedal in audio mode, then read the maintenance log: discovery should
-   fail with a UAC2 error and dump the raw bytes. Confirm they match the Mac dump.
-3. Back up the flash with jl-uboot-tool before flashing Rob's build, then dump again.
-4. Drift experiment on the device: compare the noise-burst period with capture only against
-   full duplex with the OUT stream running. A change means the DAC adapts to the OUT stream
-   and the ADC shares its clock, which would make the pedal's fixed cadence lock the device.
-5. After generic UAC1 lands: `AUDIO TRY` with the MOMIX, then the loopback test.
 
 ## Milestone 1 status (2026-10-09, late)
 
@@ -411,100 +401,56 @@ maintenance mode, with the interface plugged into the pedal's own host port. Des
 6. **Command:** a maintenance-mode `MOMIX FLASH` next to `AUDIO TRY` in `remote_service.cpp`,
    with `MOMIX BACKUP` as the read-only half for people who only want the dump.
 
-## Before the next session
+## Build environment on this Mac (2026-10-09)
 
-- Pick up the MOMIX. Dump the stock descriptors on the Mac with the script (needs libusb
-  and pyusb). Keep the stock dump beside the custom-firmware fixture.
-- Choose the devkit vehicle: the kit's dev board pulled from its socket, or a spare N16R8.
-  Check which USB-C port is the native OTG one and whether it can supply 5 V out (IN-OUT
-  jumper); otherwise plan on a Y-cable or powered hub.
-- Wi-Fi credentials for the maintenance API: `npm run remote:configure -- --ssid YOUR_WIFI`
-  writes the gitignored `src/native/services/remote_config.h`. The headless devkit has no
-  other way to be configured.
-- Toolchain: the Geastack CLI runs through `npx gea` from `node_modules`. ESP-IDF 5.5.4 is
-  installed by the Espressif installer under `~/.espressif/v5.5.4`, which the CLI only finds
-  with its environment spelled out:
+- Intel Mac; Homebrew in `/usr/local`, MacPorts in `/opt/local` (the user is moving to
+  MacPorts; `/opt/homebrew` is a symlink to `/opt/local`). Python for host scripts is the
+  python.org 3.14 venv at `~/.venv` (pyusb, pyserial). `DYLD_FALLBACK_LIBRARY_PATH`, if set,
+  must repeat dyld's defaults (`~/lib:/usr/local/lib:/usr/lib`) or Homebrew libraries vanish.
+- ESP-IDF 6.0.2 lives on the APFS sparse bundle `/Volumes/idf6`: tree at
+  `/Volumes/idf6/esp/esp-idf` (also reachable as `~/esp/esp-idf`), tools root
+  `/Volumes/idf6/.espressif-idf6`. The CLI finds the tree by itself but needs
+  `IDF_TOOLS_PATH=/Volumes/idf6/.espressif-idf6` exported; `~/.zshrc` sets it. `install.sh
+esp32s3` leaves out `riscv32-esp-elf-gdb`, which `idf_tools.py export` demands, so
+  `idf_tools.py install riscv32-esp-elf-gdb` is part of setup. Keep IDF trees and `.gea/build`
+  off the boot volume; it filled up once. The repos themselves are moving to another APFS
+  loopback volume; a symlink at `~/coyopedal` keeps paths stable.
+- Format tooling: `npm run format:setup` installs clang-format 22.1.8, ruff and cmake-format
+  into `build/format-tools`; `npm run format:check` fails loudly if that venv is missing.
+- Machine-local aliases in the gitignored `.gea/boards.json`: `amoled` (build only),
+  `s3-devkit` (build only, currently fails upstream), `lafvin` (needs `transports.usbSerial.serial`
+  from `npx gea boards discover` before flashing). `npx gea flash --board lafvin --monitor`
+  provisions over the CH343 port; a board already in maintenance mode updates over Wi-Fi with
+  `tools/esp32/amoled_remote.py ota`.
 
-  ```bash
-  export IDF_PATH=$HOME/.espressif/v5.5.4/esp-idf
-  export IDF_PYTHON_ENV_PATH=$HOME/.espressif/python_env/idf5.5_py3.14_en
-  export IDF_TOOLS_PATH=$HOME/.espressif
-  export GEA_ESP_IDF_VERSION=v5.5.4
-  ```
+## Upstream Geastack blockers found on the way (2026-10-09)
 
-  Two more one-time fixes were needed on this machine: the installer skipped the RISC-V gdb
-  that `idf_tools.py export` insists on (`idf_tools.py install riscv32-esp-elf-gdb` adds it),
-  and the installer keeps `espidf.constraints.v5.5.txt` under `~/.espressif/tools/` while the
-  CLI's tools root is `~/.espressif/`, so the file was copied up one level for idf.py's
-  dependency check. Upstream builds against ESP-IDF 6.0.2, so a 5.5.4 build is a compile
-  check, not a release build. With 5.5.4 the pedal's own sources, including the changed USB
-  driver, compile warning-free, but the link never happens: Geastack 0.1.87's ES8311 binding
-  sets the I2S port to -1 expecting ESP-IDF 6's `I2S_NUM_AUTO`, which 5.5 defines as a
-  positive enumerator, so its static assertion fails. A full firmware build needs ESP-IDF
-  6.0.2, installed with `npx gea setup --esp-idf --idf-version v6.0.2`. Once that exists, drop
-  the four exports above: they pin the CLI to 5.5.4.
+1. `GEA_BOARD_HAS_POWER` redefined on composed boards: the generated `board.h` defines it 0
+   while the app's root defines pass 1 for the AMOLED default, and `-Werror` stops the build.
+   Worked around in `package.json` with a per-target override (a one-line PR for upstream's
+   own `s3-devkit`, which has not built since the internal speaker landed).
+2. The ES8311 binding is compiled for every audio-capable app whether or not the board has a
+   codec, and the composer never emits a has-audio variable. A codec-less composed board cannot
+   build. Fix: the CLI's `custom-target.mjs` emits `GEA_CUSTOM_TARGET_HAS_AUDIO`, and the 2.06
+   target's CMake falls back to `audio_runtime_stub.cpp` with `GEA_BOARD_HAS_SPEAKER=0` when a
+   custom target has no audio chip. Our stopgap (PCM5100 declared as ES8311) goes away then.
+3. Already known: no SPI panel driver (ST7789/ILI9341) in the composable base, no FT6336
+   touch adapter, no codec-less I2S DAC driver.
 
-- Superseding the above (2026-10-09): the 5.5.4 tree and its tools are being deleted. ESP-IDF
-  6.0.2 goes onto an APFS sparse bundle on the large exFAT drive (exFAT itself cannot hold the
-  symlinks a toolchain and a venv need), installed by `npx gea setup --esp-idf --idf-version
-v6.0.2` with `IDF_PATH` and `IDF_TOOLS_PATH` pointing into that volume. Remove `.gea/build`
-  before the first build; its CMake cache still points at the old toolchain. The boot volume
-  ran out of space during this; keep the IDF tree and build outputs off it. The RISC-V gdb
-  gap applies to this install too: `install.sh esp32s3` leaves out `riscv32-esp-elf-gdb`
-  while `idf_tools.py export` demands it (the S3's ULP coprocessor is RISC-V), so
-  `idf_tools.py install riscv32-esp-elf-gdb` with `IDF_TOOLS_PATH` set is part of setup. The
-  harness shell does not see your exports; builds from here set `IDF_TOOLS_PATH`
-  explicitly, and the CLI finds `~/esp/esp-idf` on its own.
-- Devkit build, tried on 2026-10-09 against ESP-IDF 6.0.2: two blockers, both upstream.
-  1. `GEA_BOARD_HAS_POWER` redefined: the composed devkit's generated `board.h` defines it 0
-     while the app's root defines pass 1 for the AMOLED default, and `-Werror` stops the build.
-     The 2.41 and 3.5B boards carry a per-target override in `package.json`; the devkit never
-     got one when the root value flipped to 1. Fixed in this fork by adding
-     `boards["esp32-s3-devkit-n16r8"].defines.GEA_BOARD_HAS_POWER = 0` (a one-line PR for
-     upstream; the LAFVIN target needs the same entry).
-  2. Geastack's ES8311 binding: the base target's CMake adds `chip_bindings/audio/es8311.cpp`
-     whenever the app has the audio capability (the pedal does, for the internal speaker),
-     with no check that the board declares a codec. The composer never even emits a
-     `GEA_CUSTOM_TARGET_HAS_AUDIO` variable. On a headless composed board `board::audio` does
-     not exist and the binding fails to compile. The fix is in two Geastack packages: the CLI's
-     `custom-target.mjs` should emit `GEA_CUSTOM_TARGET_HAS_AUDIO`, and the 2.06 target's
-     CMake should fall back to `audio_runtime_stub.cpp` with `GEA_BOARD_HAS_SPEAKER=0` when a
-     custom target has no audio chip, even if the app asked for audio. Until then no headless
-     composed board builds for this app, which also means upstream's own `s3-devkit` target has
-     not built since the internal speaker landed. Worth telling the author.
-- iRig HD 2 profile retirement: no public descriptor dump of the HD 2 (1963:0033) exists, and
-  we have no unit. The plan is a quirk table keyed by VID:PID whose HD 2 entry reproduces the
-  profile's choices exactly (capture interface 2 alt 2, playback interface 1 alt 1, rate
-  request sent unconditionally and allowed to fail, playback trimmed to the startup fill),
-  then delete the fixed-profile code. Descriptor-level equivalence needs a dump from an HD 2
-  owner as a fixture; streaming equivalence needs the device, which upstream has.
-  Sequence agreed on 2026-10-09: before any PR, write to the author about the work, ask for a
-  descriptor dump of his HD 2 (the branch's own maintenance log dumps it, or `lsusb -v`), and
-  ask whether he wants to test, with a plain account of the streaming and latency state:
-  the generic path uses the UAC2 ring targets and frame-cadence pacing where the profile
-  trimmed to the startup fill. For that test the fork needs a switch that routes the HD 2
-  through the generic path instead of the VID:PID profile, so he can compare the two. Offer
-  the PR only if that comes back good. `.gea/boards.json` (gitignored) holds a build-only `amoled` alias with no USB serial.
-  `npm run format:setup` has not been run and clang-format 22.1.8 is not on the PATH; the
-  ESP toolchain's clang-format 19 at `~/.espressif/tools/esp-clang/.../bin/clang-format`
-  produces the same layout for the files touched so far.
+## iRig HD 2 profile retirement (plan)
 
-- MOMIX flashing plan: dongle or Arduino emulation, Windows for `isd_download.exe`, USMI key
-  patch, stock flash backup first.
-- Decisions for the carrier mod: lift pin 0 so BOOT stays the footswitch, which jumper
-  targets to use for MOSI and D/C, whether the camera stays plugged in.
-
-## Next steps
-
-1. Dump the MOMIX's live descriptors (on the Mac, then on the devkit pedal via the maintenance
-   log) and compare with the fixture above.
-2. Generic UAC1 discovery is implemented and host-tested; run it on the devkit pedal with the
-   MOMIX, then compare the live descriptors with the fixture and update the fixture if the
-   run-time header differs.
-3. Hardware mod on the kit; register the alias; build the headless composed target; verify
-   the headless build still compiles with the internal-speaker code.
-4. Upstream Geastack: SPI ST7789/ILI9341 panel for composed targets, FT6336 adapter, codec-less
-   I2S DAC driver.
+No public descriptor dump of the HD 2 (1963:0033) exists and we have no unit. Plan: a quirk
+table keyed by VID:PID whose HD 2 entry reproduces the profile's choices exactly (capture
+interface 2 alt 2, playback interface 1 alt 1, rate request sent unconditionally and allowed to
+fail, playback trimmed to the startup fill), then delete the fixed-profile code.
+Descriptor-level equivalence needs a dump from an HD 2 owner as a fixture; streaming equivalence
+needs the device, which upstream has. Sequence agreed 2026-10-09: before any PR, write to the
+author about the work, ask for a descriptor dump of his HD 2 (the branch's own maintenance log
+dumps it, or `lsusb -v`), and ask whether he wants to test, with a plain account of the
+streaming and latency state: the generic path uses the UAC2 ring targets and frame-cadence
+pacing where the profile trimmed to the startup fill. For that test the fork needs a switch that
+routes the HD 2 through the generic path instead of the VID:PID profile. Offer the PR only if
+that comes back good.
 
 ## Sources
 
