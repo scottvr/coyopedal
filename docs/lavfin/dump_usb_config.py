@@ -3,7 +3,7 @@
 
 Live capture needs pyusb and libusb:
 
-    brew install libusb
+    sudo port install libusb        # or: brew install libusb
     python3 -m pip install --user pyusb
     python3 docs/lavfin/dump_usb_config.py --vid e5b7 --pid 0811 --out momix.bin
 
@@ -21,6 +21,7 @@ maintenance-mode log is the other way to get them.
 from __future__ import annotations
 
 import argparse
+import os
 import struct
 import sys
 
@@ -173,14 +174,46 @@ def rebuild_from_pyusb(config) -> bytes:
     return bytes(out)
 
 
+def find_libusb(libusb1):
+    """Locate libusb-1.0 without trusting the dynamic loader's search path.
+
+    ctypes asks dyld, and dyld only looks in /usr/local/lib when
+    DYLD_FALLBACK_LIBRARY_PATH is unset; a shell that sets it to the MacPorts
+    prefix alone hides a Homebrew libusb and the other way round. So try the
+    default lookup first, then every prefix a Mac or Linux box is likely to have.
+    """
+    candidates = [os.environ.get("LIBUSB_PATH")]
+    for prefix in ("/opt/local", "/usr/local", "/opt/homebrew", "/usr"):
+        for name in ("libusb-1.0.dylib", "libusb-1.0.so.0", "libusb-1.0.so"):
+            candidates.append(os.path.join(prefix, "lib", name))
+    backend = libusb1.get_backend()
+    if backend is not None:
+        return backend
+    for path in candidates:
+        if path and os.path.exists(path):
+            backend = libusb1.get_backend(find_library=lambda _name, p=path: p)
+            if backend is not None:
+                return backend
+    return None
+
+
 def capture(vid: int, pid: int, out: str) -> int:
     try:
         import usb.core
         import usb.util
+        import usb.backend.libusb1 as libusb1
     except ImportError:
         print("pyusb is not installed: python3 -m pip install --user pyusb", file=sys.stderr)
         return 2
-    device = usb.core.find(idVendor=vid, idProduct=pid)
+    backend = find_libusb(libusb1)
+    if backend is None:
+        print(
+            "libusb-1.0 was not found. Install it (sudo port install libusb, or brew install libusb)"
+            " or point LIBUSB_PATH at the dylib.",
+            file=sys.stderr,
+        )
+        return 2
+    device = usb.core.find(backend=backend, idVendor=vid, idProduct=pid)
     if device is None:
         print(f"no USB device {vid:04x}:{pid:04x} is attached", file=sys.stderr)
         return 1
