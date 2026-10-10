@@ -11,6 +11,7 @@ for spec in 'uac2_test hdx-dma4-configuration' 'xtone_test xtone-pro-1.1.0-confi
   c++ -std=c++20 -O1 -g -fsanitize=address,undefined -Isrc "tests/usb/$test.cpp" -o "build/$test"
   "build/$test" "tests/usb/$fixture.bin"
 done
+build/uac1_test tests/usb/momix-cab-stock-fw-configuration.bin stock
 build/xtone_test tests/usb/xtone-pro-1.1.0-full-speed.bin full-speed
 # Needs the ESP-IDF the firmware was built against, which a checkout that has
 # only ever run host tests does not have. CI runs it unconditionally in the

@@ -358,6 +358,27 @@ docs/lavfin/momix-cab-stock-configuration.bin` (needs `brew install libusb` and
   the MOMIX. The dev board must be out of the carrier, or pins 19, 20 and 0 lifted, before any
   USB test.
 
+## The MOMIX CAB, stock firmware, dumped live (2026-10-09)
+
+`momix-cab-stock-fw-usb-dump.txt` is the parse; the raw 215-byte configuration is
+`tests/usb/momix-cab-stock-fw-configuration.bin` and `npm test` runs UAC1 discovery against it.
+What the factory firmware presents, against Rob's custom firmware:
+
+|          | Stock                                                                     | Rob's firmware                           |
+| -------- | ------------------------------------------------------------------------- | ---------------------------------------- |
+| Layout   | IAD, control on interface 0, streams on 1 and 2                           | no IAD, control on 1, streams on 2 and 3 |
+| Playback | stereo 16-bit 48 kHz, adaptive, EP 0x03, 192 bytes                        | same, EP 0x02                            |
+| Capture  | **mono** 16-bit 48 kHz, **asynchronous**, EP 0x83, 96 bytes               | stereo, adaptive, 192 bytes              |
+| Units    | selector units 7 and 8 between the feature units and the output terminals | none                                     |
+| Power    | 50 mA declared                                                            | 100 mA                                   |
+
+So the stock device already works with the pedal's generic UAC1 path: discovery adopts it (the
+UAC2 module declines it, the fallback takes it), the capture is channel 0 through the generic
+frame loop, and `fullSpeed48k` accepts 96-byte mono packets. Nothing in the descriptors
+explains the always-on monitor; that is firmware behaviour, which is what Rob's build changes.
+His firmware also makes the capture stereo, which the pedal does not need. The custom-firmware
+fixture remains a synthesized header around bytes from his image; the stock one is real.
+
 ## Planned: flashing the MOMIX from the pedal (decided 2026-10-09)
 
 The pedal should be able to put Rob Murru's firmware onto a stock MOMIX CAB by itself, from

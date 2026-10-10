@@ -88,8 +88,12 @@ def describe(blob: bytes) -> None:
             elif sub == 6:
                 print(
                     f"  FEATURE UNIT id={d[3]} source={d[4]} controlSize={d[5]} "
-                    f"controls={hexs(d[6:length - 1])}"
+                    f"controls={hexs(d[6 : length - 1])}"
                 )
+            elif sub == 4:
+                print(f"  MIXER UNIT id={d[3]} inputs={d[4]} sources={hexs(d[5 : 5 + d[4]])}")
+            elif sub == 5:
+                print(f"  SELECTOR UNIT id={d[3]} inputs={d[4]} sources={hexs(d[5 : 5 + d[4]])}")
             else:
                 print(f"  AC descriptor subtype={sub} {hexs(d[3:])}")
         elif kind == 0x24 and subclass == 2:

@@ -8,12 +8,20 @@
 #include <vector>
 
 // The JOYO MOMIX CAB's configuration (JieLi AC6926A4, vendor e5b7 product
-// 0811), as its USB library emits it: UAC1, one AudioControl interface with a
-// stereo 16-bit 48 kHz playback alternate on interface 2 and a stereo 16-bit
+// 0811) in two firmwares.
+//
+// Rob Murru's custom firmware ("custom"): UAC1, one AudioControl interface with
+// a stereo 16-bit 48 kHz playback alternate on interface 2 and a stereo 16-bit
 // 48 kHz capture alternate on interface 3, adaptive endpoints of 192 bytes, no
 // feedback endpoint and no sampling-frequency control. The function bytes are
-// verbatim from the firmware image; the configuration header was synthesized
-// and is to be confirmed against a live dump.
+// verbatim from the firmware image; the configuration header was synthesized.
+//
+// The factory firmware ("stock"), dumped live over EP0 on 2026-10-09: the same
+// device with an interface association, control on interface 0, stereo
+// adaptive playback on interface 1 (EP 0x03, 192 bytes) and MONO asynchronous
+// capture on interface 2 (EP 0x83, 96 bytes), with selector units between the
+// feature units and the output terminals. Discovery must adopt both; the
+// pedal's capture path takes channel 0 either way.
 namespace {
 std::vector<uint8_t> load(const char* path) {
     std::ifstream file(path, std::ios::binary);
@@ -48,17 +56,69 @@ void checkMomix(const uac1::Configuration& c, uint8_t base = 0, uint8_t ids = 0)
            c.topology.features[1].channels == 1);
     assert(c.topology.terminals.size() == 4);
 }
+void checkMomixStock(const uac1::Configuration& c) {
+    const auto pairs = uac2::pairs(c.topology);
+    assert(pairs.size() == 1);
+    const auto& p = pairs[0];
+    assert(p.capture.interface == 2 && p.capture.alternate == 1);
+    assert(p.playback.interface == 1 && p.playback.alternate == 1);
+    assert(p.capture.control == 0 && p.playback.control == 0);
+    assert(p.capture.terminal == 6 && p.playback.terminal == 1);
+    assert(p.capture.data.address == 0x83 && p.playback.data.address == 0x03);
+    assert(p.capture.data.sync == 1 && p.capture.data.maxBytes == 96);    // asynchronous
+    assert(p.playback.data.sync == 2 && p.playback.data.maxBytes == 192); // adaptive
+    assert(p.capture.format.channels == 1 && p.playback.format.channels == 2);
+    for (const auto* s : {&p.capture, &p.playback}) {
+        assert(s->format.subslot == 2 && s->format.bits == 16);
+        assert(s->format.encoding == uac2::Encoding::SignedPCM);
+        assert(s->data.interval == 1 && s->feedback.address == 0);
+        const auto* a = uac1::alternateFor(c, *s);
+        assert(a && !a->continuous && !a->rateControl && !a->maxPacketsOnly);
+        assert(a->rates.size() == 1 && a->rates[0] == 48000);
+    }
+    assert(uac2::fullSpeed48k(p));
+    // Selector units 7 and 8 sit between the feature units and the output
+    // terminals; discovery links streams to USB terminals and ignores them.
+    assert(c.topology.features.size() == 2);
+    assert(c.topology.features[0].id == 2 && c.topology.features[0].source == 1 &&
+           c.topology.features[0].channels == 2);
+    assert(c.topology.features[1].id == 5 && c.topology.features[1].source == 4 &&
+           c.topology.features[1].channels == 1);
+    assert(c.topology.terminals.size() == 4);
+    // Mono 16-bit capture: 96 bytes carry 48 frames, channel 0 is the guitar,
+    // and the generic frame loop (neither the 32-bit mono nor the packed
+    // fast path) decodes it.
+    uac2::Codec capture;
+    assert(capture.configure(p.capture.format));
+    assert(!capture.nativeMono && !capture.packedPcm());
+    assert(p.capture.format.frameBytes() == 2 && p.capture.data.maxBytes / 2 == 48);
+    const uint8_t frame[2] = {0x00, 0x40};
+    assert(capture.capture(frame, 0) == 0x40000000);
+}
 } // namespace
 
 int main(int argc, char** argv) {
-    assert(argc == 2);
+    assert(argc == 2 || argc == 3);
     const auto live = load(argv[1]);
     uac1::Configuration c;
     assert(uac1::discover(live.data(), live.size(), c) == uac2::Error::None);
-    checkMomix(c);
     // The UAC2 module must decline it, so the driver's fallback is what adopts it.
     uac2::Configuration uac2Config;
     assert(uac2::discover(live.data(), live.size(), uac2Config) != uac2::Error::None);
+    if (argc == 3 && std::strcmp(argv[2], "stock") == 0) {
+        checkMomixStock(c);
+        for (size_t n = 0; n < live.size(); ++n)
+            assert(uac1::discover(live.data(), n, c) != uac2::Error::None);
+        for (size_t off = 0; off < live.size(); off += live[off]) {
+            auto broken = live;
+            broken[off] = 0;
+            assert(uac1::discover(broken.data(), broken.size(), c) != uac2::Error::None);
+        }
+        puts("Generic UAC1: MOMIX CAB stock firmware (IAD, selector units, mono asynchronous "
+             "capture) adopted; truncations refused");
+        return 0;
+    }
+    checkMomix(c);
 
     // Renumber every interface, terminal, unit and endpoint. Nothing in
     // discovery may depend on the MOMIX's own numbering.

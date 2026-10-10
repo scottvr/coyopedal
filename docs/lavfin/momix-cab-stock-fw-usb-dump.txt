@@ -1,0 +1,28 @@
+device e5b7:0811 usb=1.10 class=239 release=1.00 maxPacket0=64
+manufacturer: ShenZhen-JOYO-Technology
+product: Momix-Cab
+wrote 215 bytes (read over EP0) to usb-configuration.bin
+  CONFIG total=215 interfaces=3 value=1 attributes=0x80 maxPower=50mA
+  IAD first=0 count=3 class=01/02/00
+  INTERFACE 0 alt 0 endpoints=0 class=01/01/00 AudioControl
+  AC HEADER bcdADC=1.00 total=85
+  INPUT TERMINAL id=1 type=USB streaming channels=2 config=0x0003
+  FEATURE UNIT id=2 source=1 controlSize=1 controls=01 02 02
+  AC descriptor subtype=5 08 01 02 00
+  OUTPUT TERMINAL id=3 type=speaker source=8
+  INPUT TERMINAL id=4 type=microphone channels=1 config=0x0000
+  FEATURE UNIT id=5 source=4 controlSize=1 controls=03 00
+  AC descriptor subtype=5 07 01 05 00
+  OUTPUT TERMINAL id=6 type=USB streaming source=7
+  INTERFACE 1 alt 0 endpoints=0 class=01/02/00 AudioStreaming
+  INTERFACE 1 alt 1 endpoints=1 class=01/02/00 AudioStreaming
+  AS GENERAL terminal=1 delay=1 formatTag=0x0001
+  FORMAT TYPE 1 channels=2 subframe=2 bits=16 rates=[48000]
+  ENDPOINT 0x03 attributes=0x09 sync=adaptive maxPacket=192 interval=1 refresh=0 synchAddress=0x00
+  CS ENDPOINT attributes=0x00 samplingFreqControl=0 lockDelayUnits=0 lockDelay=0
+  INTERFACE 2 alt 0 endpoints=0 class=01/02/00 AudioStreaming
+  INTERFACE 2 alt 1 endpoints=1 class=01/02/00 AudioStreaming
+  AS GENERAL terminal=6 delay=1 formatTag=0x0001
+  FORMAT TYPE 1 channels=1 subframe=2 bits=16 rates=[48000]
+  ENDPOINT 0x83 attributes=0x05 sync=async maxPacket=96 interval=1 refresh=0 synchAddress=0x00
+  CS ENDPOINT attributes=0x00 samplingFreqControl=0 lockDelayUnits=0 lockDelay=0
