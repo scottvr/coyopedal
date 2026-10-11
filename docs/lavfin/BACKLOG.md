@@ -17,8 +17,9 @@ lafvin`. Run `npm test` and `npm run check` after source changes.
 
 Goal: the pedal boots on the LAFVIN dev board and streams audio with the stock MOMIX.
 
-1. Pull the dev board from the carrier (or lift pins 0, 19, 20). Confirm which USB-C port is
-   OTG and whether it supplies 5 V (IN-OUT jumper); otherwise Y-cable or powered hub.
+1. Pull the dev board from the carrier (or lift pins 0, 19, 20). Done 2026-10-10: the OTG
+   port supplies 5 V out (the MOMIX powers up in it while the board is fed from the UART
+   port), so no Y-cable or hub is needed. Pin labels on the dev board match the carrier socket.
 2. `npx gea boards discover`, add `transports.usbSerial.serial` to the `lafvin` alias in
    `.gea/boards.json`.
 3. Wi-Fi for the maintenance API: `npm run remote:configure -- --ssid YOUR_WIFI` (writes the

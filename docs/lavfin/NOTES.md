@@ -75,9 +75,11 @@ are ADC_BAT and TFT_MOSI, and GPIO 0 (BOOT, the pedal's footswitch) is TFT_DC.
 3. Jumper the display module's MOSI and DC pads to free dev-board header pins (GPIO 3 and 46,
    or camera pins with the ribbon unplugged). The panel already runs through the GPIO matrix,
    so any free pin works.
-4. USB: either the dev board's OTG port (check that it supplies 5 V out; many of these boards
-   have an IN/OUT solder jumper on the OTG VBUS), or wire the interface's D+, D-, 5 V and GND
-   straight to the header at GPIO 20, GPIO 19, 5 V and GND. The MOMIX draws 50 mA.
+4. USB: the dev board's OTG port. Measured 2026-10-10: with the board powered from the UART
+   port, the OTG port carries 5 V out (the MOMIX lights up in it), and each port alone puts a
+   steady 5 V on the header's 5 V pin, so no IN/OUT jumper work is needed. The fallback is to
+   wire the interface's D+, D-, 5 V and GND straight to the header at GPIO 20, GPIO 19, 5 V
+   and GND. The MOMIX draws 50 mA.
 5. Power the kit from the DC jack so display and LED switching noise stays off the rail that
    feeds the interface's preamp.
 
@@ -95,9 +97,9 @@ build for this app until Geastack gates its ES8311 binding; see "What is missing
   CH343 UART port; the pedal is configured over the maintenance API (Wi-Fi credentials via
   `npm run remote:configure`). It needs 8 MB PSRAM, so only R8 modules qualify; the bare
   WROOM-1 modules in the drawer count only if they are N16R8 and sit on a carrier with USB.
-- **VBUS on the devkit:** a bare board does not feed the host port by itself. Use a Y-cable or
-  powered hub, or check the board for an IN-OUT solder jumper on the OTG VBUS. The MOMIX needs
-  50 mA.
+- **VBUS on the devkit:** the kit's own dev board does feed its OTG port when powered from
+  the UART port (measured 2026-10-10, MOMIX powers up in it). A spare board may not; check it
+  the same way before reaching for a Y-cable or powered hub. The MOMIX needs 50 mA.
 - **Freenove ESP32-S3 (in the drawing robot):** leave it there. If it is the N8R8 variant its
   8 MB flash would need its own partition layout anyway.
 - **LilyGo T-Deck, T-Embed, T-Display S3:** all ST7789-class panels, so they share the LAFVIN
