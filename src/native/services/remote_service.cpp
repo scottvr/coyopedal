@@ -1,4 +1,5 @@
 #include "remote_service.h"
+#include "wifi_diag.hpp"
 #include "model_import.h"
 #include "cabinet_files.h"
 
@@ -178,6 +179,40 @@ httpd_handle_t g_server{};
 std::uint8_t g_mac[6]{};
 char g_network_name[33]{};
 TaskHandle_t g_wifi_task{};
+// Reconnect backoff. The station used to call esp_wifi_connect() the instant
+// it was disconnected, forever, which hammers an access point that is already
+// refusing it and makes a failed join indistinguishable from a cooldown the
+// AP imposes after one. Now each failure doubles the wait, from 2 s to 60 s,
+// and an acquired IP resets it.
+esp_timer_handle_t g_reconnect_timer{};
+unsigned g_reconnect_failures{};
+
+void reconnect_now(void*) {
+    const esp_err_t err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "reconnect request failed: %s", esp_err_to_name(err));
+    }
+}
+
+void schedule_reconnect() {
+    if (g_reconnect_timer == nullptr) {
+        const esp_timer_create_args_t args{.callback = reconnect_now,
+                                           .arg = nullptr,
+                                           .dispatch_method = ESP_TIMER_TASK,
+                                           .name = "wifi_reconnect",
+                                           .skip_unhandled_events = true};
+        if (esp_timer_create(&args, &g_reconnect_timer) != ESP_OK) {
+            reconnect_now(nullptr);
+            return;
+        }
+    }
+    const unsigned exponent = g_reconnect_failures < 5U ? g_reconnect_failures : 5U;
+    const unsigned delay_s = exponent >= 5U ? 60U : (2U << exponent);
+    g_reconnect_failures++;
+    ESP_LOGI(kTag, "reconnecting in %u s (failure %u)", delay_s, g_reconnect_failures);
+    esp_timer_stop(g_reconnect_timer);
+    esp_timer_start_once(g_reconnect_timer, static_cast<std::uint64_t>(delay_s) * 1000000ULL);
+}
 EventGroupHandle_t g_wifi_events{};
 esp_netif_t* g_wifi_netif{};
 bool g_wifi_initialized{};
@@ -2015,9 +2050,10 @@ void wifi_event(void*, esp_event_base_t event_base, const std::int32_t event_id,
         }
         ESP_LOGW(
             kTag,
-            "Wi-Fi disconnected from %s (%02x:%02x:%02x:%02x:%02x:%02x): reason=%u; reconnecting",
+            "Wi-Fi disconnected from %s (%02x:%02x:%02x:%02x:%02x:%02x): reason=%u rssi=%d",
             g_network_name, event->bssid[0], event->bssid[1], event->bssid[2], event->bssid[3],
-            event->bssid[4], event->bssid[5], static_cast<unsigned>(event->reason));
+            event->bssid[4], event->bssid[5], static_cast<unsigned>(event->reason),
+            static_cast<int>(event->rssi));
         if (g_wifi_events != nullptr) {
             xEventGroupClearBits(g_wifi_events, kWifiHasIp);
         }
@@ -2025,8 +2061,18 @@ void wifi_event(void*, esp_event_base_t event_base, const std::int32_t event_id,
         std::snprintf(detail, sizeof detail, "RETRYING - REASON %u",
                       static_cast<unsigned>(event->reason));
         set_network_status(true, false, detail);
-        esp_wifi_connect();
+        schedule_reconnect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_AUTHMODE_CHANGE) {
+        const auto* const event = static_cast<wifi_event_sta_authmode_change_t*>(event_data);
+        ESP_LOGI(kTag, "Wi-Fi auth mode changed %d -> %d", static_cast<int>(event->old_mode),
+                 static_cast<int>(event->new_mode));
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_BEACON_TIMEOUT) {
+        ESP_LOGW(kTag, "Wi-Fi beacon timeout");
+    } else if (event_base == WIFI_EVENT && event_id != WIFI_EVENT_STA_START &&
+               event_id != WIFI_EVENT_SCAN_DONE && event_id != WIFI_EVENT_HOME_CHANNEL_CHANGE) {
+        ESP_LOGI(kTag, "Wi-Fi event %ld", static_cast<long>(event_id));
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        g_reconnect_failures = 0;
         const auto* const event = static_cast<ip_event_got_ip_t*>(event_data);
         ESP_LOGI(kTag, "station ready: " IPSTR ":%u", IP2STR(&event->ip_info.ip),
                  static_cast<unsigned>(kHttpPort));
@@ -2138,6 +2184,9 @@ bool start_wifi() {
     // Active HTTP/OTA traffic wakes the modem automatically.
     if (esp_wifi_set_ps(WIFI_PS_MIN_MODEM) != ESP_OK)
         return false;
+    // No-ops unless the board's defines set COYOPEDAL_WIFI_DIAG=1.
+    coyopedal::wifi_diag::start(g_mac);
+    coyopedal::wifi_diag::log_scan_of(COYOPEDAL_REMOTE_WIFI_SSID);
     if (esp_wifi_connect() != ESP_OK)
         return false;
 #if COYOPEDAL_REMOTE_DISABLE_USB_AUDIO
