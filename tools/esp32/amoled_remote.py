@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authenticated discovery, diagnostics, commands and OTA for the AMOLED pedal."""
+"""Authenticated discovery, diagnostics, commands and OTA for the pedal, on any board."""
 
 from __future__ import annotations
 
@@ -165,8 +165,8 @@ def resolve_host(args: argparse.Namespace, config: Config) -> str:
     if len(found) == 1:
         return found[0][0]
     if not found:
-        fail("No CoyoPedal AMOLED answered discovery. Pass --host IP if broadcast is filtered.")
-    fail("Multiple CoyoPedal AMOLED devices answered; pass --host IP explicitly.")
+        fail("No CoyoPedal answered discovery. Pass --host IP if broadcast is filtered.")
+    fail("Multiple CoyoPedal devices answered; pass --host IP explicitly.")
 
 
 def request(
@@ -573,7 +573,7 @@ def main() -> int:
     if args.command == "discover":
         found = discover(config)
         if not found:
-            fail("No CoyoPedal AMOLED answered authenticated discovery.")
+            fail("No CoyoPedal answered authenticated discovery.")
         for address, details in found:
             print(f"{address}\t{json.dumps(details, sort_keys=True)}")
         return 0
