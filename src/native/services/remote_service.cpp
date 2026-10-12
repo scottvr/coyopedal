@@ -2103,11 +2103,15 @@ bool start_wifi() {
     network.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
     network.sta.threshold.rssi = -127;
     network.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    // Station mode joins a WPA2-Personal network. Do not advertise PMF or SAE
-    // negotiation here: some dual-band routers accept association and then
-    // silently drop the 4-way exchange when those capabilities are mixed,
-    // producing reason 15 despite a valid WPA2 passphrase.
-    network.sta.pmf_cfg.capable = false;
+    // WPA2-Personal or better. The station negotiates SAE where the router
+    // offers it (CONFIG_ESP_WIFI_ENABLE_WPA3_SAE in sdkconfig.defaults) and
+    // plain WPA2 elsewhere. Protected management frames are not something this
+    // code can decline: IDF 6 marks pmf_cfg.capable deprecated and always
+    // accepts PMF when the router advertises it. An earlier version set it to
+    // false against a dual-band router that dropped the 4-way handshake
+    // (reason 15 with a valid passphrase); that flag no longer did anything,
+    // and a WPA2/WPA3 transition router reproduced the same failure until SAE
+    // was compiled in. `required` stays false so WPA2-only routers still work.
     network.sta.pmf_cfg.required = false;
     network.sta.sae_pwe_h2e = WPA3_SAE_PWE_UNSPECIFIED;
     if (esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, nullptr) != ESP_OK)

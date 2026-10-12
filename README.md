@@ -217,9 +217,10 @@ The Gea CLI installs everything else, including ESP-IDF.
    ```
 
    It asks for the Wi-Fi password; the pedal joins that network in maintenance
-   mode. Skipping this step is allowed: the build then writes a disabled stub
-   in its place, and generating the real file later and building again is
-   enough.
+   mode. The network has to be on 2.4 GHz (the ESP32-S3 has no 5 GHz radio)
+   with WPA2 or WPA3 Personal security; WPA2/WPA3 transition mode is fine.
+   Skipping this step is allowed: the build then writes a disabled stub in its
+   place, and generating the real file later and building again is enough.
 
 5. Connect the board over USB and register it:
 

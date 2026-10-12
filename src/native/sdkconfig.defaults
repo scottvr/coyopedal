@@ -139,6 +139,13 @@ CONFIG_USB_HOST_HUBS_SUPPORTED=y
 # lowered below the real-time NAM stage immediately after esp_wifi_init(). TCP,
 # HTTP and discovery tasks are also below both audio stages.
 CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1=y
+# WPA3-Personal (SAE). The Gea base target turns it off; this list comes after
+# the base's, so it wins here. Without it the station joins a WPA2/WPA3
+# transition-mode router as WPA2 with protected management frames and no SAE,
+# and such routers can leave the four-way handshake unanswered (reason 15 with
+# a correct passphrase). SAE code stays in flash; its handshake heap is only
+# needed in maintenance mode, where the banks are lent to the heap anyway.
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
 # Wi-Fi remains available in the production audio image. Its default IRAM and
 # RX-IRAM optimizations permanently consume the same internal SRAM bank used by
 # USB DMA, so keep those cold paths in flash and reserve SRAM for realtime work.
