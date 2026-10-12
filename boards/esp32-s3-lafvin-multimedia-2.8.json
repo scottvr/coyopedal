@@ -3,7 +3,7 @@
   "extends": "esp32-s3",
   "adapter": "esp32-idf",
   "mcu": "esp32s3",
-  "_comment": "LAFVIN ESP32-S3 Multimedia Kit: an ESP32-S3-WROOM-1 N16R8 dev board (16 MB flash, 8 MB octal PSRAM, CH343 UART port, native USB-OTG port) on a carrier with a 2.8-inch 240x320 SPI LCD, FT6336U touch, microSD on SDMMC 1-bit, a PCM5100 I2S DAC with a PAM8403 amplifier, WS2812 and buzzer. Headless for now: the composable base has no SPI panel driver and the chips catalog no FT6336 adapter. The carrier uses GPIO 19 and 20 (the native USB pair) for a battery divider and the display's MOSI; those two pins are lifted out of the socket so the OTG port can host the audio interface. See docs/lavfin/NOTES.md.",
+  "_comment": "LAFVIN ESP32-S3 Multimedia Kit: an ESP32-S3-WROOM-1 N16R8 dev board (16 MB flash, 8 MB octal PSRAM, CH343 UART port, native USB-OTG port) on a carrier with a 2.8-inch 240x320 SPI LCD, FT6336U touch, microSD on SDMMC 1-bit, a PCM5100 I2S DAC with a PAM8403 amplifier, WS2812 and buzzer. Headless for now: the composable base has no SPI panel driver and the chips catalog no FT6336 adapter. The carrier uses GPIO 19 and 20 (the native USB pair) for a battery divider and the display's MOSI; those two pins are lifted out of the socket so the OTG port can host the audio interface. See the pedalboard workspace repository, docs/kit.md and docs/display.md.",
   "flashSize": "16MB",
   "_console": "The CH343 UART bridge is the console and the flashing port; the native USB port is the pedal's host port.",
   "console": {
