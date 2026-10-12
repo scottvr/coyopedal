@@ -2155,13 +2155,20 @@ bool start_wifi() {
     network.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     // WPA2-Personal or better. The station negotiates SAE where the router
     // offers it (CONFIG_ESP_WIFI_ENABLE_WPA3_SAE in sdkconfig.defaults) and
-    // plain WPA2 elsewhere. Protected management frames are not something this
-    // code can decline: IDF 6 marks pmf_cfg.capable deprecated and always
-    // accepts PMF when the router advertises it. An earlier version set it to
-    // false against a dual-band router that dropped the 4-way handshake
-    // (reason 15 with a valid passphrase); that flag no longer did anything,
-    // and a WPA2/WPA3 transition router reproduced the same failure until SAE
-    // was compiled in. `required` stays false so WPA2-only routers still work.
+    // plain WPA2 elsewhere. `required` stays false so WPA2-only routers work.
+    //
+    // History, kept because the symptom will be seen again. An earlier version
+    // set pmf_cfg.capable = false with the note that some dual-band routers
+    // accept association and then silently drop the 4-way handshake (reason
+    // 15 with a valid passphrase) when PMF and SAE capabilities are mixed. The
+    // observation was right. A capture on such a router (an AT&T gateway)
+    // showed what it is: WPA3 compatibility mode, a plain WPA2 RSN element
+    // with no PMF for legacy clients plus Wi-Fi Alliance override elements
+    // carrying SAE with PMF required. A station that advertises PMF against
+    // the base element is neither kind of client, and the handshake dies. IDF
+    // 6 deprecates pmf_cfg.capable and forces it true, so that assignment had
+    // become a no-op without a warning. The same decision now lives in
+    // disable_wpa3_compatible_mode below, where IDF 6 reads it.
     network.sta.pmf_cfg.required = false;
     // SAE password element: offer hash-to-element as well as hunt-and-peck.
     // The IDF 6.0.2 supplicant treats WPA3_SAE_PWE_UNSPECIFIED as
@@ -2170,10 +2177,11 @@ bool start_wifi() {
     // SAE commit: auth -> init after four seconds, reason 2 (AUTH_EXPIRE). With
     // BOTH the station uses H2E whenever the router's RSNXE advertises it.
     network.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
-    // Bench switch. A gateway in WPA3 compatibility mode advertises a plain
-    // WPA2 RSN element for legacy clients plus override elements carrying SAE;
-    // with this set the station ignores the overrides and joins as that legacy
-    // WPA2 client. Off by default so a WPA3-only network still works.
+    // A gateway in WPA3 compatibility mode advertises a plain WPA2 RSN element
+    // for legacy clients plus override elements carrying SAE; with this set
+    // the station ignores the overrides and joins as that legacy WPA2 client,
+    // which is what the mode is for. A board define, off by default, so a
+    // WPA3-only network still works; the LAFVIN board sets it for its gateway.
     network.sta.disable_wpa3_compatible_mode = COYOPEDAL_WIFI_NO_WPA3_COMPAT ? 1 : 0;
     if (esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, nullptr) != ESP_OK)
         return false;

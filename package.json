@@ -470,7 +470,6 @@
           "esp32-s3-lafvin-multimedia-2.8": {
             "defines": {
               "GEA_BOARD_HAS_POWER": 0,
-              "COYOPEDAL_WIFI_DIAG": 1,
               "COYOPEDAL_WIFI_NO_WPA3_COMPAT": 1
             }
           },
