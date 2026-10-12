@@ -344,6 +344,64 @@
               "size": "0x710000"
             }
           },
+          "esp32-s3-lafvin-multimedia-2.8-display": {
+            "nvs": {
+              "type": "data",
+              "subtype": "nvs",
+              "offset": "0x9000",
+              "size": "0x6000"
+            },
+            "otadata": {
+              "type": "data",
+              "subtype": "ota",
+              "offset": "0xf000",
+              "size": "0x2000"
+            },
+            "phy_init": {
+              "type": "data",
+              "subtype": "phy",
+              "offset": "0x11000",
+              "size": "0x1000"
+            },
+            "ota_0": {
+              "type": "app",
+              "subtype": "ota_0",
+              "offset": "0x20000",
+              "size": "0x400000"
+            },
+            "ota_1": {
+              "type": "app",
+              "subtype": "ota_1",
+              "offset": "0x420000",
+              "size": "0x400000"
+            },
+            "models": {
+              "type": "data",
+              "subtype": "0x40",
+              "offset": "0x820000",
+              "size": "0x40000",
+              "data": "build/factory/models.bin"
+            },
+            "presets": {
+              "type": "data",
+              "subtype": "0x41",
+              "offset": "0x860000",
+              "size": "0x10000",
+              "data": "build/factory/presets.json"
+            },
+            "user_models": {
+              "type": "data",
+              "subtype": "0x42",
+              "offset": "0x870000",
+              "size": "0x80000"
+            },
+            "storage": {
+              "type": "data",
+              "subtype": "spiffs",
+              "offset": "0x8f0000",
+              "size": "0x710000"
+            }
+          },
           "esp32-s3-touch-lcd-3.5b": {
             "nvs": {
               "type": "data",
@@ -411,6 +469,14 @@
           },
           "esp32-s3-lafvin-multimedia-2.8": {
             "defines": {
+              "GEA_BOARD_HAS_POWER": 0
+            }
+          },
+          "esp32-s3-lafvin-multimedia-2.8-display": {
+            "cssDevicePixelRatio": 1,
+            "defines": {
+              "GEA_EMBEDDED_DISPLAY_WIDTH": 320,
+              "GEA_EMBEDDED_DISPLAY_HEIGHT": 240,
               "GEA_BOARD_HAS_POWER": 0
             }
           },

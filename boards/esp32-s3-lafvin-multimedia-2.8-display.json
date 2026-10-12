@@ -1,0 +1,79 @@
+{
+  "id": "esp32-s3-lafvin-multimedia-2.8-display",
+  "extends": "esp32-s3",
+  "adapter": "esp32-idf",
+  "mcu": "esp32s3",
+  "_comment": "LAFVIN ESP32-S3 Multimedia Kit with the carrier's panel and touch driven: the display variant of esp32-s3-lafvin-multimedia-2.8.json, built with the Geastack forks (cli, targets, chips) that teach the composer an SPI panel and give the FT6336 an ESP32 adapter. Requires the hardware mod: dev-board pins 0, 19 and 20 lifted, and the panel's MOSI and D/C jumpered from the carrier to GPIO 16 and 17 (two camera lines, ribbon unplugged). SCK 21 and CS 47 are as wired. The carrier routes no backlight or reset GPIO: BL is on, RST follows EN. See the pedalboard workspace repository, docs/display.md.",
+  "flashSize": "16MB",
+  "_console": "The CH343 UART bridge is the console and the flashing port; the native USB port is the pedal's host port.",
+  "console": {
+    "transport": "uart",
+    "uart": 0,
+    "baud": 115200
+  },
+  "psram": {
+    "mode": "octal",
+    "speed": 80
+  },
+  "_buses": "SDA 2, SCL 1: the touch controller and the heart-rate sensor.",
+  "buses": {
+    "i2c": {
+      "sda": 2,
+      "scl": 1
+    }
+  },
+  "_audio": "Stopgap. The module is a PCM5100 DAC with no registers, but Geastack's base target compiles its ES8311 binding for every audio-capable app, and a composed board without an audio chip has nothing for it to compile against. Declaring the DAC as an ES8311 on its real I2S pins lets the firmware build; the codec initialisation then fails over I2C at run time, which the binding reports instead of aborting, and the pedal hides its speaker control. MCLK and DIN are required fields; they go to the two free strapping pins, which nothing on the carrier uses. Replace with a codec-less I2S DAC driver once Geastack has one. The CLI also insists on an amplifier-enable pin, which the PAM8403 does not have; GPIO 15 is the camera's XCLK line, an output the pedal never uses, so the binding can drive it freely.",
+  "_display": "240x320 ST7789-class glass the vendor drives in BGR order at 80 MHz; start at 40 MHz and raise it after first light. invertColors is the first-light toggle if colours come out negative.",
+  "_touch": "FT6336U on the shared I2C bus; the socket routes neither INT nor reset, so the binding polls.",
+  "chips": {
+    "display": {
+      "driver": "st7789",
+      "interface": "spi",
+      "width": 240,
+      "height": 320,
+      "pclkHz": 40000000,
+      "spiMode": 0,
+      "colorOrder": "bgr",
+      "invertColors": false,
+      "pins": {
+        "mosi": 16,
+        "sclk": 21,
+        "cs": 47,
+        "dc": 17
+      }
+    },
+    "touch": {
+      "driver": "ft6336",
+      "interface": "i2c"
+    },
+    "audio": {
+      "driver": "es8311",
+      "interface": "i2s",
+      "pins": {
+        "mclk": 3,
+        "bclk": 42,
+        "ws": 14,
+        "dout": 41,
+        "din": 46,
+        "powerAmplifier": 15
+      }
+    }
+  },
+  "storage": {
+    "microSD": {
+      "interface": "sdmmc-1bit",
+      "pins": {
+        "clk": 39,
+        "cmd": 38,
+        "data0": 40
+      }
+    }
+  },
+  "_controls": "BOOT on GPIO 0 is the pedal's footswitch; the carrier also wires it to the display's D/C line, so the pin is lifted out of the socket with 19 and 20.",
+  "controls": {
+    "launcherButton": {
+      "pin": 0,
+      "activeLevel": 0
+    }
+  }
+}
