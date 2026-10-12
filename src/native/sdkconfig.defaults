@@ -150,6 +150,12 @@ CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
 # supplicant log lines at the project's INFO level, so a rejected SAE commit
 # names its status code instead of surfacing only as reason 2. About 60 KB.
 CONFIG_ESP_WIFI_DEBUG_PRINT=y
+# DIAGNOSTIC (2026-10-12, same lifetime): compile DEBUG-level logging in so the
+# supplicant's SAE and handshake tracing ("wpa") and the Wi-Fi driver's own
+# debug output can be enabled; remote_service.cpp raises "wpa" at run time
+# only when the board defines COYOPEDAL_WIFI_DIAG=1. Costs flash, not RAM.
+# CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT is not set
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 # Wi-Fi remains available in the production audio image. Its default IRAM and
 # RX-IRAM optimizations permanently consume the same internal SRAM bank used by
 # USB DMA, so keep those cold paths in flash and reserve SRAM for realtime work.
