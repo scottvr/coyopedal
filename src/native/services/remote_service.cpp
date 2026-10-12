@@ -2113,7 +2113,13 @@ bool start_wifi() {
     // and a WPA2/WPA3 transition router reproduced the same failure until SAE
     // was compiled in. `required` stays false so WPA2-only routers still work.
     network.sta.pmf_cfg.required = false;
-    network.sta.sae_pwe_h2e = WPA3_SAE_PWE_UNSPECIFIED;
+    // SAE password element: offer hash-to-element as well as hunt-and-peck.
+    // The IDF 6.0.2 supplicant treats WPA3_SAE_PWE_UNSPECIFIED as
+    // hunt-and-peck only (esp_wpa3.c only derives a PT for HASH_TO_ELEMENT or
+    // BOTH), and a Wi-Fi 6 gateway that requires H2E then never answers the
+    // SAE commit: auth -> init after four seconds, reason 2 (AUTH_EXPIRE). With
+    // BOTH the station uses H2E whenever the router's RSNXE advertises it.
+    network.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     if (esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, nullptr) != ESP_OK)
         return false;
     if (esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, nullptr) != ESP_OK)
