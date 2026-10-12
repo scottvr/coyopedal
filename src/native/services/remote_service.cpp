@@ -1,5 +1,9 @@
 #include "remote_service.h"
 #include "wifi_diag.hpp"
+
+#ifndef COYOPEDAL_WIFI_NO_WPA3_COMPAT
+#define COYOPEDAL_WIFI_NO_WPA3_COMPAT 0
+#endif
 #include "model_import.h"
 #include "cabinet_files.h"
 
@@ -2166,6 +2170,11 @@ bool start_wifi() {
     // SAE commit: auth -> init after four seconds, reason 2 (AUTH_EXPIRE). With
     // BOTH the station uses H2E whenever the router's RSNXE advertises it.
     network.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    // Bench switch. A gateway in WPA3 compatibility mode advertises a plain
+    // WPA2 RSN element for legacy clients plus override elements carrying SAE;
+    // with this set the station ignores the overrides and joins as that legacy
+    // WPA2 client. Off by default so a WPA3-only network still works.
+    network.sta.disable_wpa3_compatible_mode = COYOPEDAL_WIFI_NO_WPA3_COMPAT ? 1 : 0;
     if (esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event, nullptr) != ESP_OK)
         return false;
     if (esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event, nullptr) != ESP_OK)
