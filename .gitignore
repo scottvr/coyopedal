@@ -23,3 +23,6 @@ web/dist/
 # page's source link, because a dirty tree is not a commit anyone can be
 # pointed at.
 emsdk-*/
+
+**workspace
+.vscode/
