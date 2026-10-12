@@ -11,20 +11,26 @@ are not meant for the device.
 
 ## Status
 
-- The kit can host the pedal, but only after a small reversible hardware mod (below), because
-  the carrier board uses the ESP32-S3's native USB pins for the display and a battery divider.
-- Milestone 1, the headless composed target, builds (see below) and has not run on hardware
-  yet. The screen, touch and speaker need upstream Geastack work before they can be used.
-- The working list is `BACKLOG.md` beside this file: current sprint, backlog, done log.
-- The audio interface is a JOYO MOMIX CAB, a UAC1 device. Its stock firmware was dumped live on
-  2026-10-09 and the pedal's generic UAC1 path adopts it unchanged; Rob Murru's custom firmware
-  is only needed when the MOMIX headphone jack is the pedal's output (it removes the always-on
-  cab-simmed monitor). Generic UAC1 discovery now exists in the pedal (`src/native/drivers/uac1.hpp`, wired into
-  `usb_audio.cpp` as the fallback when UAC2 discovery declines a device), with a host test against
-  the MOMIX fixture in `tests/usb/`. Streaming on hardware is still to be done. Measured cost: the
-  driver object grows by 12.7 KB of code (46.5 KB to 59.3 KB of `.text`), no change to data, and
-  discovery allocates only on the setup task. The firmware builds and links against ESP-IDF 6.0.2:
-  3,068,336 bytes, 63% of the 8 MB OTA slot free, no warnings in the pedal's sources.
+- The pedal runs on the LAFVIN kit's dev board (first boot 2026-10-10) and streams audio with
+  the stock JOYO MOMIX CAB through the generic UAC1 path: the live configuration descriptor is
+  byte-identical to the fixture in `tests/usb/`, capture and playback counts match in every
+  5 s window, no errors or missed blocks, both cores at about 87% of the 1333 us block. Latency
+  passes by ear; the loopback and drift measurements wait for a cable.
+- The board has been seated back in the carrier for these runs, with the native USB port
+  hosting the MOMIX; the display, touch and speaker need the upstream Geastack work tracked
+  in `BACKLOG.md` ("Upstream tracks") before they can be used. The design is in "Display plan"
+  below.
+- Maintenance mode over Wi-Fi: the AT&T gateway runs WPA2/WPA3 transition mode and left the
+  four-way handshake unanswered until WPA3 was compiled in (commit `e6dc162`; see "Wi-Fi
+  findings"). The main-network test with that build is the next bench item.
+- The working list is `BACKLOG.md` beside this file: current sprint, upstream tracks, backlog,
+  done log.
+- Rob Murru's custom MOMIX firmware is only needed when the MOMIX headphone jack is the
+  pedal's output (it removes the always-on cab-simmed monitor). Generic UAC1 discovery lives in
+  `src/native/drivers/uac1.hpp`, wired into `usb_audio.cpp` as the fallback when UAC2
+  discovery declines a device, with a host test against the MOMIX fixture. Measured cost: the
+  driver object grows by 12.7 KB of code (46.5 KB to 59.3 KB of `.text`), no change to data,
+  and discovery allocates only on the setup task.
 
 ## The kit
 
@@ -141,18 +147,31 @@ EXPANDER`, `GEA_EMBEDDED_NO_DISPLAY=1` when there is neither display nor canvas,
 
 ### What is missing upstream
 
-- Display: the composable base accepts only QSPI and parallel RGB panels. The SPI ST7789
-  pipeline exists in directory targets (`esp32-s3-m5stack-sticks3/main/display.cpp`, reused by
-  `esp32-s3-touch-lcd-1.54` with `GEA_ST7789_*` compile definitions) but `extends` only allows
-  `esp32-s3`.
-- Touch: `targets/esp32/chip_bindings/touch/ft6336.cpp` exists in targets 0.1.98, but the
-  chips catalog (0.1.4 and 0.1.6) lists no esp32-idf adapter for ft6336, and the base CMake only
-  admits ft3168 for composed targets.
-- Speaker: only the ES8311 binding exists. The kit's PCM5100 needs no configuration at all,
-  just an I2S transmit stream (16 or 24 bit, 48 kHz; it runs without SCK from its internal
-  PLL), so a codec-less I2S DAC driver upstream is small.
+Checked again 2026-10-12 against targets 0.1.101, cli 0.1.102 and chips 0.1.6 (all three
+repositories are public on GitHub under `geastack/`, GPL-3.0, one author, releases most days).
+None of the three gaps has closed, but the composer is being extended in exactly this area:
+cli `f9038d8` (2026-10-08) added custom QSPI panel profiles, `5414944` (2026-09-22) composed
+RGB boards with a GT911 and an I/O expander.
+
+- Display: `src/boards/custom-target.mjs` rejects every `chips.display.interface` except
+  `qspi` and `rgb`. The SPI ST7789 pipeline exists as
+  `targets/esp32-s3-m5stack-sticks3/main/display.cpp` (1,412 lines; `esp32-s3-touch-lcd-1.54`
+  reuses it by `#include` with `GEA_ST7789_*` compile definitions). It reads its pins from a
+  `St7789DisplayConfig { spiHost, mosi, sclk, cs, dc, reset, backlight }` in the board header,
+  hard-codes `LCD_RGB_ELEMENT_ORDER_RGB` and `esp_lcd_panel_invert_color(true)`, and treats the
+  backlight LEDC channel as mandatory. The composed base's `main/CMakeLists.txt` includes the
+  QSPI `targets/esp32/display.cpp` for any non-RGB display.
+- Touch: `targets/esp32/chip_bindings/touch/ft6336.cpp` exists and is already shaped for
+  composition (reads `board::touch.reset` and `.interrupt`, polls at priority 4 when INT is
+  `GPIO_NUM_NC`, uses the primary I2C bus), but the chips catalog entry has `"adapters": {}`,
+  and the base CMake's touch gate only names ft3168 and gt911.
+- Speaker: only the ES8311 binding exists, compiled for every audio-capable app. The ES8311
+  binding writes samples through `esp_codec_dev`, so when the codec's I2C open fails nothing
+  reaches I2S; the stopgap cannot drive the PCM5100 even by accident. A codec-less I2S DAC
+  binding is the I2S half of that file without the codec-dev calls.
 - Per AGENTS.md none of this can live in this repo (no board CMakeLists, partition CSV or
-  display driver here).
+  display driver here), and `src/ui/README.md` says why the repo carries no local patches:
+  the route is forks of the three repositories, tested here, then PRs.
 
 ### Repo changes for milestone 1 (headless): done 2026-10-09
 
@@ -453,6 +472,80 @@ streaming and latency state: the generic path uses the UAC2 ring targets and fra
 pacing where the profile trimmed to the startup fill. For that test the fork needs a switch that
 routes the HD 2 through the generic path instead of the VID:PID profile. Offer the PR only if
 that comes back good.
+
+## Wi-Fi findings (2026-10-11 and 12)
+
+- Symptom on the main network (AT&T gateway, "WPA2/WPA3 Personal" = transition mode, 2.4 GHz
+  radio on channel 8 at the time): `auth -> assoc -> run`, four seconds of silence, then
+  `reason=15` with a passphrase that was in the image byte for byte. IDF's docs file reason 15
+  under wrong password; a transition-mode router meeting a WPA2-with-PMF, no-SAE station
+  produces the same thing.
+- Cause, two layers: the Gea base target's sdkconfig turns `CONFIG_ESP_WIFI_ENABLE_WPA3_SAE`
+  off and this app inherited it; and `remote_service.cpp` set `pmf_cfg.capable = false` against
+  a dual-band router that had dropped the handshake the same way, but on the ESP-IDF 6.0.2 the
+  README pins that field is deprecated and forced true internally (api-guides/wifi-security).
+  The author's workaround never ran on the IDF they documented. Fix: SAE on in the app's
+  `sdkconfig.defaults` (layered after the base's), dead assignment removed, comment rewritten
+  (`e6dc162`). LAFVIN image 2,358,528 -> 2,405,856 bytes; AMOLED with credentials and SAE
+  3,534,144 bytes (56% of its 8 MB slot free). IDF 6 picks WPA3 automatically on a transition
+  router once SAE is compiled in.
+- The gateway's guest network (2.4 GHz only, a locally-administered BSSID derived from the
+  base MAC) refused the pedal at the first authentication frame, `reason=2` after a one-second
+  timeout, under WPA2-only and under transition mode, on the right channel. A phone was not
+  tried. Not explained; abandoned in favour of the main network, since the guest cannot be
+  made WPA2-only without the gateway warning that all bands "must" share one transition-mode
+  setting.
+- Hidden SSIDs: IDF finds them only on actively scanned channels (1 to 11 with the default
+  country policy); the pedal's all-channel scan returned `reason=201` against the hidden guest
+  and found it once it was visible. Keep the SSID visible.
+- Credentials are compiled in from the gitignored `remote_config.h`; there is no NVS or SD
+  override, so a new network means a rebuild. The Wi-Fi driver already persists its station
+  config in NVS (`CONFIG_ESP_WIFI_NVS_ENABLED=y`), so runtime provisioning is mostly a
+  transport question. Improv Wi-Fi (improv-wifi.com; serial variant over the CH343 port; C++
+  parser under Apache-2.0 with an ESP-IDF component manifest; ESP Web Tools flashes and
+  provisions from a browser) is the candidate. It does not carry the maintenance API token,
+  which is also compiled in: phase one moves only the credentials, the token moves when the
+  device can generate one and reveal it once over the same port.
+- Tooling found on the way: `gea flash --no-build` and `--image FILE` skip the rebuild (not in
+  the help text); the factory asset packers rewrote identical outputs on every run, which made
+  every build relink (`29ee4f9` fixes that); the eim installer hard-codes `~/.espressif`, so
+  the symlink chain to `/Volumes/idf6` must stay.
+
+## Display plan (2026-10-12)
+
+The panel is a 2.8" 240x320 SPI module the vendor drives with TFT_eSPI's ST7789 driver in BGR
+order at 80 MHz (their sheet says ILI9341V). Touch is an FT6336U on the shared I2C bus (SDA 2,
+SCL 1) with no INT or reset routed to the socket. The carrier routes no backlight or reset GPIO
+either: BL is on, RST follows EN.
+
+Pieces, in the order they are needed:
+
+1. **Hardware.** Lift dev-board pins 0, 19 and 20 (BOOT stays the footswitch, the native USB
+   pair stays the host port). Jumper the panel's MOSI and DC pads to two camera pins with the
+   ribbon unplugged, GPIO 16 and 17 for example. GPIO 3 and 46 stay with the ES8311 stopgap
+   until upstream track A removes the need for it; the composer rejects pin collisions, so the
+   definition cannot name them twice. SCK 21 and CS 47 stay as wired.
+2. **Composer (cli, track B).** Accept `chips.display.interface: "spi"` with driver `st7789`:
+   pins `mosi`, `sclk`, `cs`, `dc`, optional `reset` and `backlight`; `width`, `height`,
+   `pclkHz`, `spiMode`, `colorOrder` (rgb|bgr), `invertColors`, the four gap values. Emit
+   `St7789DisplayConfig` in `board.h`, the `GEA_ST7789_*` definitions, and
+   `GEA_CUSTOM_TARGET_DISPLAY_INTERFACE=spi` in `target.cmake`.
+3. **Base target (targets, track B).** For `spi`, include the sticks3 pipeline instead of the
+   QSPI `display.cpp`, plus `esp_driver_ledc`. In the pipeline: colour order and inversion from
+   definitions, backlight and reset optional (`GPIO_NUM_NC` skips the LEDC channel and the
+   reset line). Upstream will probably want the file moved under `chip_bindings/displays/`
+   since two targets already share it by relative `#include`; propose it, do not insist.
+4. **Catalog (chips, tracks B and C).** An `st7789` display entry with an `esp32-idf` adapter
+   and the configuration list above; the `ft6336` entry gains the same adapter block as
+   `ft3168`. Check the touch gate in the base CMake admits `ft6336` the way it admits `gt911`.
+5. **This repo.** `boards/esp32-s3-lafvin-multimedia-2.8.json` gains `chips.display` and
+   `chips.touch`; `package.json` gets `cssDevicePixelRatio: 1` for the target (320x240 logical
+   in landscape; the UI needs 205 rows and the LCD 3.5B runs at about 320x213). Start at 40 MHz
+   like upstream's 1.54 board; the vendor's 80 MHz through the GPIO matrix can be tried after
+   first light.
+6. **Order of truth.** Nothing goes upstream until the panel has drawn and touch has moved a
+   slider here. The forks are consumed through `package.json` during that time, never through
+   a patched `node_modules`.
 
 ## Sources
 
