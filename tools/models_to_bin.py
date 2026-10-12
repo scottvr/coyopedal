@@ -48,6 +48,20 @@ def fixed(text: str, size: int, what: str) -> bytes:
     return encoded + bytes(size - len(encoded))
 
 
+def write_if_changed(output, image: bytes) -> bool:
+    """Write the image only when it differs from what is on disk.
+
+    The output is embedded in the firmware, and the build system goes by its
+    timestamp: rewriting identical bytes still forces a relink and a new image
+    on every build. Returns True when the file was written.
+    """
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists() and output.read_bytes() == image:
+        return False
+    output.write_bytes(image)
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=pathlib.Path, help="factory.json")
@@ -101,9 +115,9 @@ def main() -> int:
     image = struct.pack("<4sHHII", MAGIC, VERSION, len(entries), total, 0) + table + payloads
     assert len(image) == total, (len(image), total)
 
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_bytes(image)
-    print(f"packed {len(entries)} profiles into {arguments.output.name}, {total} bytes")
+    written = write_if_changed(arguments.output, image)
+    state = "packed" if written else "unchanged:"
+    print(f"{state} {len(entries)} profiles into {arguments.output.name}, {total} bytes")
     return 0
 
 

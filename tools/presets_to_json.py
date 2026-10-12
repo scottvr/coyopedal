@@ -51,6 +51,20 @@ def fits(text: str, size: int, what: str) -> None:
         raise SystemExit(f"error: {what} {text!r} needs {len(encoded) + 1} bytes, limit is {size}")
 
 
+def write_if_changed(output, image: bytes) -> bool:
+    """Write the image only when it differs from what is on disk.
+
+    The output is embedded in the firmware, and the build system goes by its
+    timestamp: rewriting identical bytes still forces a relink and a new image
+    on every build. Returns True when the file was written.
+    """
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists() and output.read_bytes() == image:
+        return False
+    output.write_bytes(image)
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("presets", type=pathlib.Path, help="presets.json")
@@ -121,9 +135,9 @@ def main() -> int:
         )
         return 1
 
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_bytes(image)
-    print(f"checked {len(presets)} presets into {arguments.output.name}, {len(image)} bytes")
+    written = write_if_changed(arguments.output, image)
+    state = "checked" if written else "unchanged:"
+    print(f"{state} {len(presets)} presets into {arguments.output.name}, {len(image)} bytes")
     return 0
 
 
