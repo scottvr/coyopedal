@@ -146,6 +146,10 @@ CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1=y
 # a correct passphrase). SAE code stays in flash; its handshake heap is only
 # needed in maintenance mode, where the banks are lent to the heap anyway.
 CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
+# DIAGNOSTIC (2026-10-12, remove once the main-network join is understood):
+# supplicant log lines at the project's INFO level, so a rejected SAE commit
+# names its status code instead of surfacing only as reason 2. About 60 KB.
+CONFIG_ESP_WIFI_DEBUG_PRINT=y
 # Wi-Fi remains available in the production audio image. Its default IRAM and
 # RX-IRAM optimizations permanently consume the same internal SRAM bank used by
 # USB DMA, so keep those cold paths in flash and reserve SRAM for realtime work.
